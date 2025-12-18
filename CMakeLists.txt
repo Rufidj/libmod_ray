@@ -29,6 +29,7 @@ set(SOURCES_LIBMOD_RAY
     libmod_ray_shape.c
     libmod_ray_raycasting.c
     libmod_ray_render.c
+    libmod_ray_map.c
     libmod_ray_sectors.c
     libmod_ray_portals.c
     libmod_ray_portal_projection.c

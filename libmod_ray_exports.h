@@ -1,5 +1,6 @@
 /*
- * Raycaster Module Exports for BennuGD2
+ * libmod_ray - Raycasting Module Exports for BennuGD2
+ * Port of Andrew Lim's SDL2 Raycasting Engine
  */
 
 #ifndef __LIBMOD_RAY_EXPORTS
@@ -14,7 +15,6 @@
 /* Constantes exportadas */
 DLCONSTANT __bgdexport(libmod_ray, constants_def)[] = {
     /* Tipos de ThickWall */
-    {"RAY_THICK_WALL_NONE", TYPE_INT, RAY_THICK_WALL_TYPE_NONE},
     {"RAY_THICK_WALL_RECT", TYPE_INT, RAY_THICK_WALL_TYPE_RECT},
     {"RAY_THICK_WALL_TRIANGLE", TYPE_INT, RAY_THICK_WALL_TYPE_TRIANGLE},
     {"RAY_THICK_WALL_QUAD", TYPE_INT, RAY_THICK_WALL_TYPE_QUAD},
@@ -23,69 +23,55 @@ DLCONSTANT __bgdexport(libmod_ray, constants_def)[] = {
     {"RAY_SLOPE_WEST_EAST", TYPE_INT, RAY_SLOPE_TYPE_WEST_EAST},
     {"RAY_SLOPE_NORTH_SOUTH", TYPE_INT, RAY_SLOPE_TYPE_NORTH_SOUTH},
     
+    /* Constantes del motor */
+    {"RAY_TILE_SIZE", TYPE_INT, RAY_TILE_SIZE},
+    {"RAY_TEXTURE_SIZE", TYPE_INT, RAY_TEXTURE_SIZE},
+    
     {NULL, 0, 0}
 };
 
 DLSYSFUNCS __bgdexport(libmod_ray, functions_exports)[] = {
-    /* Inicialización y configuración del mapa */
-    FUNC("RAY_CREATE_MAP", "IIIII", TYPE_INT, libmod_ray_create_map),
-    FUNC("RAY_DESTROY_MAP", "", TYPE_INT, libmod_ray_destroy_map),
-    FUNC("RAY_SET_CELL", "IIII", TYPE_INT, libmod_ray_set_cell),
-    FUNC("RAY_GET_CELL", "III", TYPE_INT, libmod_ray_get_cell),
+    /* Inicialización */
+    FUNC("RAY_INIT", "IIII", TYPE_INT, libmod_ray_init),
+    FUNC("RAY_SHUTDOWN", "", TYPE_INT, libmod_ray_shutdown),
     
-    /* Carga/Guardado de mapas (para editor) */
+    /* Carga de mapas */
     FUNC("RAY_LOAD_MAP", "SI", TYPE_INT, libmod_ray_load_map),
-    FUNC("RAY_UNLOAD_MAP", "", TYPE_INT, libmod_ray_unload_map),
-    FUNC("RAY_SAVE_MAP", "S", TYPE_INT, libmod_ray_save_map),
+    FUNC("RAY_FREE_MAP", "", TYPE_INT, libmod_ray_free_map),
     
-    /* Información del mapa */
-    FUNC("RAY_GET_MAP_WIDTH", "", TYPE_INT, libmod_ray_get_map_width),
-    FUNC("RAY_GET_MAP_HEIGHT", "", TYPE_INT, libmod_ray_get_map_height),
-    FUNC("RAY_GET_MAP_LEVELS", "", TYPE_INT, libmod_ray_get_map_levels),
-    FUNC("RAY_GET_TILE_SIZE", "", TYPE_INT, libmod_ray_get_tile_size),
-    
-    /* Cámara */
-    FUNC("RAY_SET_CAMERA", "FFFFF", TYPE_INT, libmod_ray_set_camera),
+    /* Cámara - Getters */
     FUNC("RAY_GET_CAMERA_X", "", TYPE_FLOAT, libmod_ray_get_camera_x),
     FUNC("RAY_GET_CAMERA_Y", "", TYPE_FLOAT, libmod_ray_get_camera_y),
     FUNC("RAY_GET_CAMERA_Z", "", TYPE_FLOAT, libmod_ray_get_camera_z),
-    FUNC("RAY_GET_CAMERA_ANGLE", "", TYPE_FLOAT, libmod_ray_get_camera_angle),
+    FUNC("RAY_GET_CAMERA_ROT", "", TYPE_FLOAT, libmod_ray_get_camera_rot),
+    FUNC("RAY_GET_CAMERA_PITCH", "", TYPE_FLOAT, libmod_ray_get_camera_pitch),
+    
+    /* Cámara - Setter */
+    FUNC("RAY_SET_CAMERA", "FFFFF", TYPE_INT, libmod_ray_set_camera),
     
     /* Movimiento */
     FUNC("RAY_MOVE_FORWARD", "F", TYPE_INT, libmod_ray_move_forward),
     FUNC("RAY_MOVE_BACKWARD", "F", TYPE_INT, libmod_ray_move_backward),
     FUNC("RAY_STRAFE_LEFT", "F", TYPE_INT, libmod_ray_strafe_left),
     FUNC("RAY_STRAFE_RIGHT", "F", TYPE_INT, libmod_ray_strafe_right),
-
     FUNC("RAY_ROTATE", "F", TYPE_INT, libmod_ray_rotate),
+    FUNC("RAY_LOOK_UP_DOWN", "F", TYPE_INT, libmod_ray_look_up_down),
+    FUNC("RAY_JUMP", "", TYPE_INT, libmod_ray_jump),
     
     /* Renderizado */
-    FUNC("RAY_RENDER", "II", TYPE_INT, libmod_ray_render),
+    FUNC("RAY_RENDER", "", TYPE_INT, libmod_ray_render),
     
-    /* Sectores */
-    FUNC("RAY_ADD_SECTOR", "IIII", TYPE_INT, libmod_ray_add_sector),
-    FUNC("RAY_SET_SECTOR_FLOOR", "IFI", TYPE_INT, libmod_ray_set_sector_floor),
-    FUNC("RAY_SET_SECTOR_CEILING", "IFII", TYPE_INT, libmod_ray_set_sector_ceiling),
-    FUNC("RAY_GET_SECTOR_AT", "II", TYPE_INT, libmod_ray_get_sector_at),
+    /* Configuración */
+    FUNC("RAY_SET_FOG", "I", TYPE_INT, libmod_ray_set_fog),
+    FUNC("RAY_SET_DRAW_MINIMAP", "I", TYPE_INT, libmod_ray_set_draw_minimap),
+    FUNC("RAY_SET_DRAW_WEAPON", "I", TYPE_INT, libmod_ray_set_draw_weapon),
     
-    /* ThinWalls */
-    FUNC("RAY_ADD_THIN_WALL", "FFFFFF", TYPE_INT, libmod_ray_add_thin_wall),
-    FUNC("RAY_REMOVE_THIN_WALL", "I", TYPE_INT, libmod_ray_remove_thin_wall),
-    FUNC("RAY_GET_THIN_WALL_COUNT", "", TYPE_INT, libmod_ray_get_thin_wall_count),
-    FUNC("RAY_GET_THIN_WALL_DATA", "IPPPPPP", TYPE_INT, libmod_ray_get_thin_wall_data),
-    FUNC("RAY_SET_THIN_WALL_DATA", "IFFFFFF", TYPE_INT, libmod_ray_set_thin_wall_data),
+    /* Puertas */
+    FUNC("RAY_TOGGLE_DOOR", "II", TYPE_INT, libmod_ray_toggle_door),
     
-    /* Sprites */
+    /* Sprites dinámicos */
     FUNC("RAY_ADD_SPRITE", "FFFIII", TYPE_INT, libmod_ray_add_sprite),
     FUNC("RAY_REMOVE_SPRITE", "I", TYPE_INT, libmod_ray_remove_sprite),
-    FUNC("RAY_GET_SPRITE_COUNT", "", TYPE_INT, libmod_ray_get_sprite_count),
-    FUNC("RAY_GET_SPRITE_DATA", "IPPPPPP", TYPE_INT, libmod_ray_get_sprite_data),
-    FUNC("RAY_SET_SPRITE_DATA", "IFFFIII", TYPE_INT, libmod_ray_set_sprite_data),
-    
-    /* Portales */
-    FUNC("RAY_ADD_PORTAL", "IIFFFFFII", TYPE_INT, libmod_ray_add_portal),
-    FUNC("RAY_REMOVE_PORTAL", "I", TYPE_INT, libmod_ray_remove_portal),
-    FUNC("RAY_ENABLE_PORTAL", "II", TYPE_INT, libmod_ray_enable_portal),
     
     FUNC(0, 0, 0, 0)
 };
