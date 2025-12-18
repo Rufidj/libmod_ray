@@ -95,6 +95,8 @@ BEGIN
         if (key(_s)) ray_move_backward(5.0); end
         if (key(_left)) ray_rotate(-0.05); end
         if (key(_right)) ray_rotate(0.05); end
+        if (key(_a)) ray_strafe_left(5.0); end
+        if (key(_d)) ray_strafe_right(5.0); end
         
         // Info
         write(0, 10, 10, 0, "WS: Adelante/Atrás | Flechas: Rotar | ESC: Salir");

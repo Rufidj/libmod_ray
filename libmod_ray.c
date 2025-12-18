@@ -470,6 +470,24 @@ int64_t libmod_ray_move_backward(INSTANCE *my, int64_t *params)
     return 1;
 }
 
+int64_t libmod_ray_strafe_left(INSTANCE *my, int64_t *params)
+{
+    float speed = *(float*)&params[0];
+    /* Moverse perpendicular a la dirección de la cámara (90 grados a la izquierda) */
+    ray_camera_x -= sinf(ray_camera_angle) * speed;
+    ray_camera_y += cosf(ray_camera_angle) * speed;
+    return 1;
+}
+
+int64_t libmod_ray_strafe_right(INSTANCE *my, int64_t *params)
+{
+    float speed = *(float*)&params[0];
+    /* Moverse perpendicular a la dirección de la cámara (90 grados a la derecha) */
+    ray_camera_x += sinf(ray_camera_angle) * speed;
+    ray_camera_y -= cosf(ray_camera_angle) * speed;
+    return 1;
+}
+
 
 int64_t libmod_ray_rotate(INSTANCE *my, int64_t *params)
 {

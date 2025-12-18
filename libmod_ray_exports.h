@@ -54,6 +54,8 @@ DLSYSFUNCS __bgdexport(libmod_ray, functions_exports)[] = {
     /* Movimiento */
     FUNC("RAY_MOVE_FORWARD", "F", TYPE_INT, libmod_ray_move_forward),
     FUNC("RAY_MOVE_BACKWARD", "F", TYPE_INT, libmod_ray_move_backward),
+    FUNC("RAY_STRAFE_LEFT", "F", TYPE_INT, libmod_ray_strafe_left),
+    FUNC("RAY_STRAFE_RIGHT", "F", TYPE_INT, libmod_ray_strafe_right),
 
     FUNC("RAY_ROTATE", "F", TYPE_INT, libmod_ray_rotate),
     

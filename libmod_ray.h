@@ -468,6 +468,8 @@ int64_t libmod_ray_get_camera_angle(INSTANCE *my, int64_t *params);
 /* Movimiento */
 int64_t libmod_ray_move_forward(INSTANCE *my, int64_t *params);
 int64_t libmod_ray_move_backward(INSTANCE *my, int64_t *params);
+int64_t libmod_ray_strafe_left(INSTANCE *my, int64_t *params);
+int64_t libmod_ray_strafe_right(INSTANCE *my, int64_t *params);
 
 int64_t libmod_ray_rotate(INSTANCE *my, int64_t *params);
 
