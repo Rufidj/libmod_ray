@@ -42,6 +42,11 @@ RAY_Raycaster* ray_create_raycaster(int grid_width, int grid_height,
     rc->num_sectors = 0;
     rc->sectors_capacity = 0;
     
+    /* Inicializar array de portales */
+    rc->portals = NULL;
+    rc->num_portals = 0;
+    rc->portals_capacity = 0;
+    
     /* Crear array de grids */
     rc->grids = (GridCell**)malloc(sizeof(GridCell*) * grid_count);
     if (!rc->grids) {
@@ -94,7 +99,19 @@ void ray_destroy_raycaster(RAY_Raycaster* rc)
     
     /* Liberar sectores */
     if (rc->sectors) {
+        /* Liberar arrays de portal_ids en cada sector */
+        for (int i = 0; i < rc->num_sectors; i++) {
+            if (rc->sectors[i].portal_ids) {
+                free(rc->sectors[i].portal_ids);
+                rc->sectors[i].portal_ids = NULL;  /* Evitar double free */
+            }
+        }
         free(rc->sectors);
+    }
+    
+    /* Liberar portales */
+    if (rc->portals) {
+        free(rc->portals);
     }
     
     free(rc);

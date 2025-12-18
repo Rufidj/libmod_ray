@@ -80,6 +80,11 @@ DLSYSFUNCS __bgdexport(libmod_ray, functions_exports)[] = {
     FUNC("RAY_GET_SPRITE_DATA", "IPPPPPP", TYPE_INT, libmod_ray_get_sprite_data),
     FUNC("RAY_SET_SPRITE_DATA", "IFFFIII", TYPE_INT, libmod_ray_set_sprite_data),
     
+    /* Portales */
+    FUNC("RAY_ADD_PORTAL", "IIFFFFFII", TYPE_INT, libmod_ray_add_portal),
+    FUNC("RAY_REMOVE_PORTAL", "I", TYPE_INT, libmod_ray_remove_portal),
+    FUNC("RAY_ENABLE_PORTAL", "II", TYPE_INT, libmod_ray_enable_portal),
+    
     FUNC(0, 0, 0, 0)
 };
 

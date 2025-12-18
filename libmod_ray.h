@@ -124,6 +124,39 @@ typedef struct {
 } GridCell;
 
 /**
+ * Portal - Conexión entre dos sectores para renderizado optimizado
+ * Permite ver de un sector a otro con clipping progresivo
+ */
+typedef struct {
+    int32_t portal_id;         /* ID único del portal */
+    int32_t from_sector;       /* ID del sector origen */
+    int32_t to_sector;         /* ID del sector destino */
+    
+    /* Geometría del portal en coordenadas de mundo */
+    float x1, y1;              /* Punto inicial del portal */
+    float x2, y2;              /* Punto final del portal */
+    float bottom_z;            /* Altura inferior del portal */
+    float top_z;               /* Altura superior del portal */
+    
+    /* Flags */
+    int32_t bidirectional;     /* 1 = se puede ver en ambas direcciones, 0 = solo from→to */
+    int32_t enabled;           /* 1 = activo, 0 = cerrado/invisible */
+} RAY_Portal;
+
+/**
+ * ClipWindow - Ventana de clipping para renderizado recursivo de portales
+ * Define qué columnas y filas son visibles a través de un portal
+ */
+typedef struct {
+    int x_min;                 /* Columna mínima visible (inclusive) */
+    int x_max;                 /* Columna máxima visible (inclusive) */
+    float* y_top;              /* Array[screen_w] límite superior por columna */
+    float* y_bottom;           /* Array[screen_w] límite inferior por columna */
+    int screen_w;              /* Ancho de pantalla (para validación) */
+    int screen_h;              /* Alto de pantalla (para validación) */
+} RAY_ClipWindow;
+
+/**
  * Sector - Define un área del mapa con propiedades de suelo/techo
  */
 typedef struct {
@@ -144,7 +177,13 @@ typedef struct {
     
     /* Iluminación */
     float light_level;         /* 0.0 (oscuro) a 1.0 (brillante) */
+    
+    /* Portales */
+    int32_t* portal_ids;       /* Array de IDs de portales en este sector */
+    int32_t num_portals;       /* Número de portales */
+    int32_t portals_capacity;  /* Capacidad del array */
 } RAY_Sector;
+
 
 /* RayHit - Información de colisión de un rayo */
 typedef struct {
@@ -190,7 +229,13 @@ typedef struct {
     RAY_Sector* sectors;       /* Array de sectores */
     int num_sectors;           /* Número de sectores actuales */
     int sectors_capacity;      /* Capacidad del array */
+    
+    /* Array dinámico de portales */
+    RAY_Portal* portals;       /* Array de portales */
+    int num_portals;           /* Número de portales actuales */
+    int portals_capacity;      /* Capacidad del array */
 } RAY_Raycaster;
+
 
 /**
  * FrameCache - Caché de pre-cálculo para renderizado optimizado
@@ -280,8 +325,54 @@ int ray_point_in_quad(float ptx, float pty,
                       float v4x, float v4y);
 
 /* ============================================================================
+   FUNCIONES DE PORTALES (libmod_ray_portals.c)
+   ============================================================================ */
+
+/* Gestión de portales */
+int ray_add_portal(RAY_Raycaster* rc,
+                   int from_sector, int to_sector,
+                   float x1, float y1, float x2, float y2,
+                   float bottom_z, float top_z,
+                   int bidirectional);
+
+void ray_remove_portal(RAY_Raycaster* rc, int portal_id);
+void ray_enable_portal(RAY_Raycaster* rc, int portal_id, int enabled);
+RAY_Portal* ray_get_portal(RAY_Raycaster* rc, int portal_id);
+
+/* Gestión de ClipWindow */
+RAY_ClipWindow* ray_create_clip_window(int screen_w, int screen_h);
+void ray_destroy_clip_window(RAY_ClipWindow* window);
+void ray_reset_clip_window(RAY_ClipWindow* window);
+
+/* Detección automática */
+void ray_detect_portals_automatic(RAY_Raycaster* rc);
+
+/* Proyección de portales */
+int ray_project_portal(RAY_Portal* portal, 
+                       float cam_x, float cam_y, float cam_angle,
+                       float screen_distance, int screen_w, int screen_h,
+                       RAY_ClipWindow* parent_clip,
+                       RAY_ClipWindow* out_clip);
+
+void ray_clip_window_intersect(RAY_ClipWindow* a, RAY_ClipWindow* b, RAY_ClipWindow* out);
+
+/* Renderizado recursivo */
+int ray_find_camera_sector(RAY_Raycaster* rc, float cam_x, float cam_y);
+void ray_render_sector_recursive(RAY_Raycaster* rc, GRAPH* render_buffer,
+                                 int sector_id,
+                                 float cam_x, float cam_y, float cam_z,
+                                 float cam_angle, float cam_pitch, float fov,
+                                 int screen_w, int screen_h,
+                                 RAY_ClipWindow* clip_window);
+void ray_render_with_portals(RAY_Raycaster* rc, GRAPH* render_buffer,
+                             float cam_x, float cam_y, float cam_z,
+                             float cam_angle, float cam_pitch, float fov,
+                             int screen_w, int screen_h);
+
+/* ============================================================================
    FUNCIONES DE RAYCASTING (libmod_ray_raycasting.c)
    ============================================================================ */
+
 
 RAY_Raycaster* ray_create_raycaster(int grid_width, int grid_height, 
                                     int grid_count, int tile_size);

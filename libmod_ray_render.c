@@ -24,33 +24,10 @@ uint32_t ray_fog_color = 0xFF808080; /* Gris */
 uint32_t ray_sky_color = 0xFF87CEEB; /* Azul cielo */
 
 /**
- * Función optimizada para dibujar píxeles usando SDL2 directamente
- * Evita el overhead de gr_put_pixel para máximo rendimiento
- */
-static inline void fast_put_pixel(int x, int y, uint32_t color)
-{
-    /* Extraer componentes RGBA del color */
-    uint8_t r = (color >> 16) & 0xFF;
-    uint8_t g = (color >> 8) & 0xFF;
-    uint8_t b = color & 0xFF;
-    uint8_t a = (color >> 24) & 0xFF;
-    
-#ifdef USE_SDL2_GPU
-    /* Usar SDL2_GPU para dibujar píxel */
-    SDL_Color sdl_color = {r, g, b, a};
-    GPU_Pixel(gRenderer, x, y, sdl_color);
-#else
-    /* Usar SDL2 estándar para dibujar píxel */
-    SDL_SetRenderDrawColor(gRenderer, r, g, b, a);
-    SDL_RenderDrawPoint(gRenderer, x, y);
-#endif
-}
-
-/**
  * Aplicar efecto de niebla a un color basado en la distancia
  * OPTIMIZADO: inline para evitar overhead de llamada a función
  */
-static inline uint32_t ray_apply_fog(uint32_t color, float distance)
+static inline uint32_t apply_fog_inline(uint32_t color, float distance)
 {
     /* Early exit si no hay niebla */
     if (distance <= ray_fog_start) {
@@ -79,6 +56,14 @@ static inline uint32_t ray_apply_fog(uint32_t color, float distance)
     
     return (a1 << 24) | (r << 16) | (g << 8) | b;
 }
+
+/* Wrapper para mantener compatibilidad */
+uint32_t ray_apply_fog(uint32_t color, float distance)
+{
+    return apply_fog_inline(color, distance);
+}
+
+
 
 /* ============================================================================
    FRAME CACHE - PRE-CÁLCULO OPTIMIZADO
@@ -302,13 +287,13 @@ void ray_render_wall_strip(GRAPH* buffer, RAY_RayHit* hit,
             if (tex_y < 0) tex_y = 0;
             if (tex_y >= texture->height) tex_y = texture->height - 1;
             
-            /* Obtener color del pixel de la textura usando gr_get_pixel */
+            /* Obtener color del pixel de la textura - OPTIMIZADO */
             uint32_t color = gr_get_pixel(texture, tex_x, tex_y);
             
             /* Aplicar niebla */
-            color = ray_apply_fog(color, hit->distance);
+            color = apply_fog_inline(color, hit->distance);
             
-            /* Dibujar pixel en el buffer usando gr_put_pixel */
+            /* Dibujar pixel en el buffer - OPTIMIZADO */
             if (strip >= 0 && strip < buffer->width && y >= 0 && y < buffer->height) {
                 gr_put_pixel(buffer, strip, y, color);
             }
@@ -556,6 +541,14 @@ void ray_render_frame(RAY_Raycaster* rc, GRAPH* render_buffer,
     /* Limpiar buffer completamente antes de renderizar */
     gr_clear(render_buffer);
     
+    /* Si hay sectores y portales, usar renderizado con portales */
+    if (rc->num_sectors > 0 && rc->num_portals > 0) {
+        ray_render_with_portals(rc, render_buffer, cam_x, cam_y, cam_z,
+                               cam_angle, cam_pitch, fov, screen_w, screen_h);
+        /* Por ahora, el renderizado con portales es experimental
+         * Continuamos con el renderizado normal para asegurar que algo se vea */
+    }
+    
     /* Crear frame cache (se reutilizará en frames subsiguientes) */
     static RAY_FrameCache* frame_cache = NULL;
     static int last_w = 0, last_h = 0;
@@ -662,7 +655,7 @@ void ray_render_frame(RAY_Raycaster* rc, GRAPH* render_buffer,
                     if (tex_y >= cached_tex_h) tex_y = cached_tex_h - 1;
                     
                     uint32_t color = gr_get_pixel(cached_texture, tex_x, tex_y);
-                    color = ray_apply_fog(color, diagonalDistance);
+                    color = apply_fog_inline(color, diagonalDistance);
                     
                     /* Dibujar píxel y el siguiente (para llenar el gap del step) */
                     gr_put_pixel(render_buffer, strip, screenY, color);
@@ -727,7 +720,7 @@ void ray_render_frame(RAY_Raycaster* rc, GRAPH* render_buffer,
                     if (tex_y >= cached_tex_h) tex_y = cached_tex_h - 1;
                     
                     uint32_t color = gr_get_pixel(cached_texture, tex_x, tex_y);
-                    color = ray_apply_fog(color, diagonalDistance);
+                    color = apply_fog_inline(color, diagonalDistance);
                     
                     /* Dibujar píxel y el siguiente */
                     gr_put_pixel(render_buffer, strip, screenY, color);

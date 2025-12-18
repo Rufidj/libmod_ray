@@ -30,6 +30,9 @@ set(SOURCES_LIBMOD_RAY
     libmod_ray_raycasting.c
     libmod_ray_render.c
     libmod_ray_sectors.c
+    libmod_ray_portals.c
+    libmod_ray_portal_projection.c
+    libmod_ray_portal_render.c
 )
 
 add_library(mod_ray ${LIBRARY_BUILD_TYPE} ${SOURCES_LIBMOD_RAY})

@@ -348,6 +348,11 @@ int64_t libmod_ray_load_map(INSTANCE *my, int64_t *params)
     
     fclose(f);
     
+    /* Detectar portales automáticamente entre sectores adyacentes */
+    if (global_raycaster && global_raycaster->num_sectors > 1) {
+        ray_detect_portals_automatic(global_raycaster);
+    }
+    
     return 1;
 }
 
@@ -684,6 +689,53 @@ int64_t libmod_ray_set_sprite_data(INSTANCE *my, int64_t *params)
     sprite->w = (int)params[5];
     sprite->h = (int)params[6];
     
+    return 1;
+}
+
+/* ============================================================================
+   PORTALES
+   ============================================================================ */
+
+/**
+ * RAY_ADD_PORTAL(from_sector, to_sector, x1, y1, x2, y2, bottom_z, top_z, bidirectional)
+ */
+int64_t libmod_ray_add_portal(INSTANCE *my, int64_t *params)
+{
+    if (!global_raycaster) return -1;
+    
+    int from_sector = (int)params[0];
+    int to_sector = (int)params[1];
+    float x1 = *(float*)&params[2];
+    float y1 = *(float*)&params[3];
+    float x2 = *(float*)&params[4];
+    float y2 = *(float*)&params[5];
+    float bottom_z = *(float*)&params[6];
+    float top_z = *(float*)&params[7];
+    int bidirectional = (int)params[8];
+    
+    return ray_add_portal(global_raycaster, from_sector, to_sector,
+                         x1, y1, x2, y2, bottom_z, top_z, bidirectional);
+}
+
+/**
+ * RAY_REMOVE_PORTAL(portal_id)
+ */
+int64_t libmod_ray_remove_portal(INSTANCE *my, int64_t *params)
+{
+    if (!global_raycaster) return 0;
+    
+    ray_remove_portal(global_raycaster, (int)params[0]);
+    return 1;
+}
+
+/**
+ * RAY_ENABLE_PORTAL(portal_id, enabled)
+ */
+int64_t libmod_ray_enable_portal(INSTANCE *my, int64_t *params)
+{
+    if (!global_raycaster) return 0;
+    
+    ray_enable_portal(global_raycaster, (int)params[0], (int)params[1]);
     return 1;
 }
 
