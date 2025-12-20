@@ -9,6 +9,8 @@ GLOBAL
     int screen_w = 800;
     int screen_h = 600;
     int fpg_textures;
+    int fog_enabled = 0;
+    int minimap_enabled = 1;
 END
 
 PROCESS main()
@@ -16,55 +18,43 @@ PRIVATE
     float move_speed = 5.0;
     float rot_speed = 0.05;
     float pitch_speed = 0.02;
+    int fog_key_pressed = 0;
+    int minimap_key_pressed = 0;
+    float cam_x, cam_y;
 BEGIN
     set_mode(screen_w, screen_h);
     set_fps(0, 0);
     window_set_title("Raycasting Engine Test");
     
     // Cargar FPG con texturas
-    // Necesitas crear un FPG con las texturas:
-    // ID 1-4: Paredes (128x128)
-    // ID 5: Suelo (128x128)
-    // ID 6: Techo (128x128)
-    // ID 10-14: Sprites (128x128)
     fpg_textures = fpg_load("textures.fpg");
     if (fpg_textures < 0)
         say("ERROR: No se pudo cargar textures.fpg");
         say("Ejecuta crear_texturas.prg para generar el FPG");
-        say("O crea manualmente un FPG con texturas de 128x128:");
-        say("  IDs 1-4: Paredes");
-        say("  ID 5: Suelo");
-        say("  ID 6: Techo");
-        say("  IDs 10-14: Sprites");
         exit();
     end
     
     // Inicializar motor de raycasting
-    // RAY_INIT(ancho, alto, fov_grados, strip_width)
-    // strip_width: 1=mejor calidad, 2=balance, 4=mejor rendimiento
-    if (RAY_INIT(screen_w, screen_h, 90, 2) == 0)
+    if (RAY_INIT(screen_w, screen_h, 90, 1) == 0)
         say("ERROR: No se pudo inicializar el motor");
         exit();
     end
     
     // Cargar mapa .raymap
-    // Usa la herramienta map_builder para crear el mapa
     if (RAY_LOAD_MAP("test.raymap", fpg_textures) == 0)
         say("ERROR: No se pudo cargar el mapa");
-        say("Genera un mapa con: ./map_builder example/config.txt test.raymap");
         RAY_SHUTDOWN();
         exit();
     end
     
     // Configurar posición inicial de la cámara
-    // RAY_SET_CAMERA(x, y, z, rotacion_radianes, pitch_radianes)
-    // Posición en celda (3, 3) = 3 * 128 + 64 para centrar
-    RAY_SET_CAMERA(3.0 * 128.0 + 64.0, 3.0 * 128.0 + 64.0, 0.0, 0.0, 0.0);
+    // NOTA: El editor aún no guarda posición de cámara, así que la configuramos manualmente
+    RAY_SET_CAMERA(8.0 * 128.0 + 64.0, 8.0 * 128.0 + 64.0, 0.0, 0.0, 0.0);
     
     // Activar efectos
-    RAY_SET_FOG(0);              // Activar niebla
-    RAY_SET_DRAW_MINIMAP(1);     // Desactivar minimapa (puedes activarlo con 1)
-    RAY_SET_DRAW_WEAPON(0);      // Desactivar arma en pantalla
+    RAY_SET_FOG(fog_enabled);
+    RAY_SET_DRAW_MINIMAP(minimap_enabled);
+    RAY_SET_DRAW_WEAPON(0);
     
     // Iniciar proceso de renderizado
     ray_display();
@@ -106,47 +96,47 @@ BEGIN
         
         // ===== SALTO =====
         if (key(_space)) 
-            RAY_JUMP(); 
+            RAY_JUMP(1); 
         end
         
         // ===== INTERACCIÓN CON PUERTAS =====
         if (key(_enter))
-            // Abrir/cerrar puerta en la celda donde está el jugador
-            RAY_TOGGLE_DOOR(
-                RAY_GET_CAMERA_X() / 128,
-                RAY_GET_CAMERA_Y() / 128
-            );
+            cam_x = RAY_GET_CAMERA_X();
+            cam_y = RAY_GET_CAMERA_Y();
+            RAY_TOGGLE_DOOR();
         end
         
         // ===== OPCIONES DE VISUALIZACIÓN =====
         if (key(_f))
-            // Toggle fog
-            if (RAY_SET_FOG(-1)) // -1 para toggle
-                RAY_SET_FOG(0);
-            else
-                RAY_SET_FOG(1);
+            if (fog_key_pressed == 0)
+                fog_enabled = !fog_enabled;
+                RAY_SET_FOG(fog_enabled);
+                fog_key_pressed = 1;
             end
+        else
+            fog_key_pressed = 0;
         end
         
         if (key(_m))
-            // Toggle minimap
-            if (RAY_SET_DRAW_MINIMAP(-1))
-                RAY_SET_DRAW_MINIMAP(0);
-            else
-                RAY_SET_DRAW_MINIMAP(1);
+            if (minimap_key_pressed == 0)
+                minimap_enabled = !minimap_enabled;
+                RAY_SET_DRAW_MINIMAP(minimap_enabled);
+                minimap_key_pressed = 1;
             end
+        else
+            minimap_key_pressed = 0;
         end
         
         // ===== INFORMACIÓN EN PANTALLA =====
         write(0, 10, 10, 0, "WASD: Mover | Flechas: Rotar cámara | Espacio: Saltar");
         write(0, 10, 30, 0, "Enter: Abrir puerta | F: Niebla | M: Minimapa");
         write(0, 10, 50, 0, "ESC: Salir");
-        write(0, 10, 70, 0, "FPS: " + frame_info.fps);
         
         // Mostrar posición (útil para debug)
-        write(0, 10, 90, 0, "Pos: (" + 
-              RAY_GET_CAMERA_X() / 128 + ", " + 
-              RAY_GET_CAMERA_Y() / 128 + ")");
+        cam_x = RAY_GET_CAMERA_X();
+        cam_y = RAY_GET_CAMERA_Y();
+        write(0, 10, 70, 0, "Pos: (" + (cam_x / 128) + ", " + (cam_y / 128) + ")");
+        write(0, 10, 90, 0, "Fog: " + fog_enabled + " | Minimap: " + minimap_enabled);
         
         if (key(_esc)) 
             break; 
@@ -166,7 +156,6 @@ PROCESS ray_display()
 BEGIN
     LOOP
         // Renderizar el frame del raycasting
-        // RAY_RENDER retorna el ID del graph renderizado
         graph = RAY_RENDER();
         
         if (graph)
@@ -180,4 +169,3 @@ BEGIN
         FRAME;
     END
 END
-

@@ -395,17 +395,14 @@ static void ray_draw_sprites(GRAPH *dest, float *z_buffer)
 void ray_render_frame(GRAPH *dest)
 {
     if (!dest) {
-        fprintf(stderr, "RAY_RENDER: dest is NULL\n");
         return;
     }
     
     if (!g_engine.initialized) {
-        fprintf(stderr, "RAY_RENDER: Engine not initialized\n");
         return;
     }
     
     if (!g_engine.raycaster.grids) {
-        fprintf(stderr, "RAY_RENDER: No grids loaded\n");
         return;
     }
     
@@ -414,11 +411,46 @@ void ray_render_frame(GRAPH *dest)
         return;
     }
     
-    printf("RAY_RENDER: Starting render - %dx%d, rayCount=%d\n", 
-           dest->width, dest->height, g_engine.rayCount);
     
-    /* Limpiar pantalla con color de cielo */
-    gr_clear(dest);
+    /* Renderizar cielo - skybox o color sólido */
+    if (g_engine.skyTextureID > 0) {
+        /* Renderizar skybox texture */
+        GRAPH *sky_texture = bitmap_get(g_engine.fpg_id, g_engine.skyTextureID);
+        if (sky_texture) {
+            /* Skybox cilíndrico - mapear textura horizontalmente según rotación de cámara */
+            float angle_per_pixel = (2.0f * M_PI) / dest->width;
+            
+            for (int x = 0; x < dest->width; x++) {
+                /* Calcular ángulo para este pixel */
+                float pixel_angle = g_engine.camera.rot + (x - dest->width / 2) * angle_per_pixel;
+                
+                /* Normalizar ángulo a [0, 2π] */
+                while (pixel_angle < 0) pixel_angle += 2.0f * M_PI;
+                while (pixel_angle >= 2.0f * M_PI) pixel_angle -= 2.0f * M_PI;
+                
+                /* Mapear a coordenada X de textura */
+                int tex_x = (int)(pixel_angle / (2.0f * M_PI) * sky_texture->width) % sky_texture->width;
+                
+                /* Dibujar columna vertical del skybox */
+                for (int y = 0; y < dest->height / 2; y++) {
+                    /* Mapear Y de pantalla a Y de textura */
+                    int tex_y = (y * sky_texture->height) / (dest->height / 2);
+                    if (tex_y >= sky_texture->height) tex_y = sky_texture->height - 1;
+                    
+                    uint32_t pixel = ray_sample_texture(sky_texture, tex_x, tex_y);
+                    gr_put_pixel(dest, x, y, pixel);
+                }
+            }
+        } else {
+            /* Si no se encuentra la textura, usar color sólido */
+            uint32_t sky_color = 0x87CEEB;
+            gr_clear_as(dest, sky_color);
+        }
+    } else {
+        /* Color sólido azul cielo */
+        uint32_t sky_color = 0x87CEEB; /* Sky blue: RGB(135, 206, 235) */
+        gr_clear_as(dest, sky_color);
+    }
     
     /* Crear buffer de rayhits */
     RAY_RayHit *all_rayhits = (RAY_RayHit*)malloc(g_engine.rayCount * RAY_MAX_RAYHITS * sizeof(RAY_RayHit));
@@ -433,7 +465,7 @@ void ray_render_frame(GRAPH *dest)
         return;
     }
     
-    printf("RAY_RENDER: Buffers allocated\n");
+    /* Buffers allocated */
     
     // Inicializar z-buffer
     for (int i = 0; i < g_engine.rayCount; i++) {
@@ -501,12 +533,28 @@ void ray_render_frame(GRAPH *dest)
             }
         }
         
-        /* Renderizar todos los hits de atrás hacia adelante */
+    }
+    
+    /* Recolectar todos los hits de todos los strips */
+    int total_hits = 0;
+    for (int x = 0; x < g_engine.rayCount; x++) {
+        total_hits += rayhit_counts[x];
+    }
+    
+    /* Total hits calculated */
+    
+    
+    /* Renderizar cada strip */
+    for (int x = 0; x < g_engine.rayCount; x++) {
+        int num_hits = rayhit_counts[x];
+        RAY_RayHit *hits = &all_rayhits[x * RAY_MAX_RAYHITS];
+        
         /* Esto permite ver niveles superiores mientras el más cercano tapa lo que está detrás */
         for (int h = 0; h < num_hits; h++) {
             RAY_RayHit *rayHit = &hits[h];
             
             if (rayHit->wallType == 0) continue;
+            
             
             // Calcular altura de pared en pantalla
             int wall_screen_height = (int)ray_strip_screen_height(g_engine.viewDist,
@@ -543,5 +591,5 @@ void ray_render_frame(GRAPH *dest)
     free(rayhit_counts);
     free(z_buffer);
     
-    printf("RAY_RENDER: Frame complete\n");
+    /* Frame complete */
 }

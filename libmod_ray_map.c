@@ -1,6 +1,6 @@
 /*
  * libmod_ray_map.c - Map Loading System
- * Implements loading of .raymap binary format
+ * Implements loading of .raymap binary format (version 1 and 2)
  */
 
 #include "libmod_ray.h"
@@ -16,13 +16,20 @@ extern RAY_Engine g_engine;
 
 typedef struct {
     char magic[8];           /* "RAYMAP\x1a" */
-    uint32_t version;        /* Version 1 */
+    uint32_t version;        /* 1 or 2 */
     uint32_t map_width;
     uint32_t map_height;
-    uint32_t num_levels;     /* Típicamente 3 */
+    uint32_t num_levels;     /* Typically 3 */
     uint32_t num_sprites;
     uint32_t num_thin_walls;
     uint32_t num_thick_walls;
+    /* Version 2 adds camera fields: */
+    float camera_x;
+    float camera_y;
+    float camera_z;
+    float camera_rot;
+    float camera_pitch;
+    int32_t skyTextureID;    /* ID de textura para skybox (0 = sin skybox) */
 } RAY_MapHeader;
 
 /* ============================================================================
@@ -37,9 +44,18 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
         return 0;
     }
     
-    /* Leer header */
+    /* Leer header base */
     RAY_MapHeader header;
-    if (fread(&header, sizeof(RAY_MapHeader), 1, f) != 1) {
+    memset(&header, 0, sizeof(RAY_MapHeader));
+    
+    if (fread(header.magic, 1, 8, f) != 8 ||
+        fread(&header.version, sizeof(uint32_t), 1, f) != 1 ||
+        fread(&header.map_width, sizeof(uint32_t), 1, f) != 1 ||
+        fread(&header.map_height, sizeof(uint32_t), 1, f) != 1 ||
+        fread(&header.num_levels, sizeof(uint32_t), 1, f) != 1 ||
+        fread(&header.num_sprites, sizeof(uint32_t), 1, f) != 1 ||
+        fread(&header.num_thin_walls, sizeof(uint32_t), 1, f) != 1 ||
+        fread(&header.num_thick_walls, sizeof(uint32_t), 1, f) != 1) {
         fprintf(stderr, "RAY: Error leyendo header del mapa\n");
         fclose(f);
         return 0;
@@ -53,14 +69,50 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
     }
     
     /* Verificar versión */
-    if (header.version != 1) {
+    if (header.version != 1 && header.version != 2) {
         fprintf(stderr, "RAY: Versión de mapa no soportada: %u\n", header.version);
         fclose(f);
         return 0;
     }
     
-    printf("RAY: Cargando mapa %dx%d con %d niveles\n",
-           header.map_width, header.map_height, header.num_levels);
+    printf("RAY: Cargando mapa v%d %dx%d con %d niveles\n",
+           header.version, header.map_width, header.map_height, header.num_levels);
+    printf("RAY: Header completo:\n");
+    printf("  - version: %u\n", header.version);
+    printf("  - map_width: %u\n", header.map_width);
+    printf("  - map_height: %u\n", header.map_height);
+    printf("  - num_levels: %u\n", header.num_levels);
+    printf("  - num_sprites: %u\n", header.num_sprites);
+    printf("  - num_thin_walls: %u\n", header.num_thin_walls);
+    printf("  - num_thick_walls: %u\n", header.num_thick_walls);
+    
+    /* Leer campos de cámara si es versión 2 */
+    if (header.version == 2) {
+        if (fread(&header.camera_x, sizeof(float), 1, f) != 1 ||
+            fread(&header.camera_y, sizeof(float), 1, f) != 1 ||
+            fread(&header.camera_z, sizeof(float), 1, f) != 1 ||
+            fread(&header.camera_rot, sizeof(float), 1, f) != 1 ||
+            fread(&header.camera_pitch, sizeof(float), 1, f) != 1 ||
+            fread(&header.skyTextureID, sizeof(int32_t), 1, f) != 1) {
+            fprintf(stderr, "RAY: Error leyendo datos de cámara/skybox\n");
+            fclose(f);
+            return 0;
+        }
+        
+        /* Aplicar posición de cámara */
+        g_engine.camera.x = header.camera_x;
+        g_engine.camera.y = header.camera_y;
+        g_engine.camera.z = header.camera_z;
+        g_engine.camera.rot = header.camera_rot;
+        g_engine.camera.pitch = header.camera_pitch;
+        
+        /* Aplicar skybox */
+        g_engine.skyTextureID = header.skyTextureID;
+        
+        printf("RAY: Cámara cargada: (%.1f, %.1f, %.1f)\n",
+               header.camera_x, header.camera_y, header.camera_z);
+        printf("RAY: Skybox ID: %d\n", header.skyTextureID);
+    }
     
     /* Crear grids del raycaster */
     ray_raycaster_create_grids(&g_engine.raycaster,
@@ -77,6 +129,48 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
             fclose(f);
             return 0;
         }
+        
+        /* Contar celdas no vacías para detectar datos basura */
+        int non_zero_count = 0;
+        int corrupted_count = 0;
+        int total_cells = header.map_width * header.map_height;
+        for (int i = 0; i < total_cells; i++) {
+            int val = g_engine.raycaster.grids[level][i];
+            if (val != 0) {
+                non_zero_count++;
+                /* Detectar valores corruptos (IDs de textura deberían ser < 1000) */
+                if (val < 0 || val > 1000) {
+                    printf("RAY: ADVERTENCIA - Valor corrupto detectado en grid %d[%d]: %d\n", 
+                           level, i, val);
+                    g_engine.raycaster.grids[level][i] = 0;
+                    corrupted_count++;
+                    non_zero_count--;
+                }
+            }
+        }
+        
+        
+        if (corrupted_count > 0) {
+            printf("RAY: Limpiados %d valores corruptos en grid nivel %d\n", 
+                   corrupted_count, level);
+        }
+        
+        /* DESHABILITADO: No limpiar grids automáticamente basándose en cantidad de celdas
+         * Esto eliminaba datos válidos como torres pequeñas en nivel 2
+        if (level > 0 && non_zero_count > 0 && non_zero_count < 10) {
+            printf("RAY: ADVERTENCIA - Grid nivel %d tiene solo %d celdas con datos, limpiando...\n", 
+                   level, non_zero_count);
+            memset(g_engine.raycaster.grids[level], 0, grid_size);
+            non_zero_count = 0;
+        }
+        */
+        
+        /* DEBUG: Mostrar primeras celdas del grid */
+        printf("RAY: Grid nivel %d - %d celdas con paredes - Primeras 10: ", level, non_zero_count);
+        for (int i = 0; i < 10 && i < total_cells; i++) {
+            printf("%d ", g_engine.raycaster.grids[level][i]);
+        }
+        printf("\n");
     }
     
     /* Leer sprites */
@@ -115,30 +209,11 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
         g_engine.sprites[g_engine.num_sprites++] = sprite;
     }
     
-    /* Leer ThinWalls */
-    g_engine.num_thin_walls = 0;
-    for (uint32_t i = 0; i < header.num_thin_walls && i < RAY_MAX_THIN_WALLS; i++) {
-        RAY_ThinWall *tw = (RAY_ThinWall*)malloc(sizeof(RAY_ThinWall));
-        if (!tw) continue;
-        
-        if (fread(&tw->x1, sizeof(float), 1, f) != 1 ||
-            fread(&tw->y1, sizeof(float), 1, f) != 1 ||
-            fread(&tw->x2, sizeof(float), 1, f) != 1 ||
-            fread(&tw->y2, sizeof(float), 1, f) != 1 ||
-            fread(&tw->wallType, sizeof(int), 1, f) != 1 ||
-            fread(&tw->horizontal, sizeof(int), 1, f) != 1 ||
-            fread(&tw->height, sizeof(float), 1, f) != 1 ||
-            fread(&tw->z, sizeof(float), 1, f) != 1 ||
-            fread(&tw->slope, sizeof(float), 1, f) != 1 ||
-            fread(&tw->hidden, sizeof(int), 1, f) != 1) {
-            fprintf(stderr, "RAY: Error leyendo thin wall %d\n", i);
-            free(tw);
-            fclose(f);
-            return 0;
-        }
-        
-        tw->thickWall = NULL; /* Se enlazará después si es necesario */
-        g_engine.thinWalls[g_engine.num_thin_walls++] = tw;
+    /* Saltar ThinWalls standalone (el editor no los maneja) */
+    for (uint32_t i = 0; i < header.num_thin_walls; i++) {
+        /* Cada thin wall: x1, y1, x2, y2, wallType, horizontal, height, z, slope, hidden */
+        /* = 4 floats + 3 ints + 3 floats + 1 int = 8 floats + 4 ints = 48 bytes */
+        fseek(f, 48, SEEK_CUR);
     }
     
     /* Leer ThickWalls */
@@ -149,9 +224,10 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
         
         ray_thick_wall_init(tw);
         
-        /* Leer tipo y propiedades básicas */
+        /* Leer campos básicos - IMPORTANTE: el editor escribe 'slope' ANTES de x,y,w,h */
         if (fread(&tw->type, sizeof(int), 1, f) != 1 ||
             fread(&tw->slopeType, sizeof(int), 1, f) != 1 ||
+            fread(&tw->slope, sizeof(float), 1, f) != 1 ||
             fread(&tw->x, sizeof(float), 1, f) != 1 ||
             fread(&tw->y, sizeof(float), 1, f) != 1 ||
             fread(&tw->w, sizeof(float), 1, f) != 1 ||
@@ -168,8 +244,7 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
         }
         
         /* Leer puntos si es TRIANGLE o QUAD */
-        if (tw->type == RAY_THICK_WALL_TYPE_TRIANGLE || 
-            tw->type == RAY_THICK_WALL_TYPE_QUAD) {
+        if (tw->type == 2 || tw->type == 3) {  // TRIANGLE o QUAD
             int num_points;
             if (fread(&num_points, sizeof(int), 1, f) != 1) {
                 free(tw);
@@ -221,6 +296,7 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
                 fread(&thin->z, sizeof(float), 1, f) != 1 ||
                 fread(&thin->slope, sizeof(float), 1, f) != 1 ||
                 fread(&thin->hidden, sizeof(int), 1, f) != 1) {
+                fprintf(stderr, "RAY: Error leyendo thin wall %d del thick wall %d\n", t, i);
                 ray_thick_wall_free(tw);
                 free(tw);
                 fclose(f);
@@ -233,21 +309,89 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
         g_engine.thickWalls[g_engine.num_thick_walls++] = tw;
     }
     
-    /* Leer floor grid */
-    size_t grid_size = header.map_width * header.map_height * sizeof(int);
-    g_engine.floorGrid = (int*)malloc(grid_size);
-    if (g_engine.floorGrid) {
-        if (fread(g_engine.floorGrid, grid_size, 1, f) != 1) {
-            fprintf(stderr, "RAY: Error leyendo floor grid\n");
-        }
-    }
+    /* Leer floor/ceiling grids si existen (versión 2 o mapas con datos extra) */
+    long current_pos = ftell(f);
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, current_pos, SEEK_SET);
     
-    /* Leer ceiling grid */
-    g_engine.ceilingGrid = (int*)malloc(grid_size);
-    if (g_engine.ceilingGrid) {
-        if (fread(g_engine.ceilingGrid, grid_size, 1, f) != 1) {
-            fprintf(stderr, "RAY: Error leyendo ceiling grid\n");
+    if (current_pos < file_size) {
+        printf("RAY: Leyendo floor/ceiling grids...\n");
+        
+        
+        size_t grid_size = header.map_width * header.map_height * sizeof(int);
+        
+        /* Leer floor grids (3 niveles) - CARGAR TODOS LOS NIVELES */
+        g_engine.floorGrid = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        int *floor1 = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        int *floor2 = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        
+        if (g_engine.floorGrid && floor1 && floor2) {
+            if (fread(g_engine.floorGrid, grid_size, 1, f) == 1 &&
+                fread(floor1, grid_size, 1, f) == 1 &&
+                fread(floor2, grid_size, 1, f) == 1) {
+                
+                /* DEBUG: Contar celdas no vacías */
+                int floor_count = 0;
+                for (int i = 0; i < (int)(header.map_width * header.map_height); i++) {
+                    if (g_engine.floorGrid[i] != 0) floor_count++;
+                }
+                printf("RAY: Floor grid - %d celdas con textura - Primeras 10: ", floor_count);
+                for (int i = 0; i < 10; i++) {
+                    printf("%d ", g_engine.floorGrid[i]);
+                }
+                printf("\n");
+            } else {
+                fprintf(stderr, "RAY: Error leyendo floor grids\n");
+            }
         }
+        
+        /* Por ahora liberamos floor1 y floor2 ya que el motor solo usa nivel 0 */
+        /* TODO: Implementar soporte multi-nivel para floor/ceiling */
+        if (floor1) free(floor1);
+        if (floor2) free(floor2);
+        
+        /* Leer ceiling grids (3 niveles) - CARGAR TODOS LOS NIVELES */
+        g_engine.ceilingGrid = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        int *ceiling1 = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        int *ceiling2 = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        
+        if (g_engine.ceilingGrid && ceiling1 && ceiling2) {
+            if (fread(g_engine.ceilingGrid, grid_size, 1, f) == 1 &&
+                fread(ceiling1, grid_size, 1, f) == 1 &&
+                fread(ceiling2, grid_size, 1, f) == 1) {
+                
+                /* DEBUG: Contar celdas no vacías */
+                int ceiling_count = 0;
+                for (int i = 0; i < (int)(header.map_width * header.map_height); i++) {
+                    if (g_engine.ceilingGrid[i] != 0) ceiling_count++;
+                }
+                printf("RAY: Ceiling grid - %d celdas con textura - Primeras 10: ", ceiling_count);
+                for (int i = 0; i < 10; i++) {
+                    printf("%d ", g_engine.ceilingGrid[i]);
+                }
+                printf("\n");
+            } else {
+                fprintf(stderr, "RAY: Error leyendo ceiling grids\n");
+            }
+        }
+        
+        /* Por ahora liberamos ceiling1 y ceiling2 ya que el motor solo usa nivel 0 */
+        if (ceiling1) free(ceiling1);
+        if (ceiling2) free(ceiling2);
+        
+        /* Saltar floor height grids si existen (3 niveles de floats) */
+        /* No los usamos por ahora, pero debemos saltarlos */
+        current_pos = ftell(f);
+        if (current_pos < file_size) {
+            size_t float_grid_size = header.map_width * header.map_height * sizeof(float);
+            fseek(f, float_grid_size * 3, SEEK_CUR);
+        }
+    } else {
+        /* Si no hay datos de floor/ceiling, inicializar a ceros */
+        printf("RAY: No hay floor/ceiling data, inicializando a ceros\n");
+        g_engine.floorGrid = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        g_engine.ceilingGrid = (int*)calloc(header.map_width * header.map_height, sizeof(int));
     }
     
     /* Inicializar array de puertas */
@@ -257,7 +401,6 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
     
     printf("RAY: Mapa cargado exitosamente\n");
     printf("  - Sprites: %d\n", g_engine.num_sprites);
-    printf("  - ThinWalls: %d\n", g_engine.num_thin_walls);
     printf("  - ThickWalls: %d\n", g_engine.num_thick_walls);
     
     return 1;

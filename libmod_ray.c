@@ -89,6 +89,7 @@ int64_t libmod_ray_init(INSTANCE *my, int64_t *params) {
     g_engine.drawWalls = 1;
     g_engine.drawWeapon = 1;
     g_engine.fogOn = 0;
+    g_engine.skyTextureID = 0;  /* 0 = color sólido azul */
     g_engine.skipDrawnFloorStrips = 1;
     g_engine.skipDrawnSkyboxStrips = 1;
     g_engine.skipDrawnHighestCeilingStrips = 1;
@@ -229,18 +230,26 @@ int64_t libmod_ray_set_camera(INSTANCE *my, int64_t *params) {
 
 /* ============================================================================
    MOVIMIENTO
-   ============================================================================ */
-
+   ============================================================================*/
+/* Movement functions */
 int64_t libmod_ray_move_forward(INSTANCE *my, int64_t *params) {
     if (!g_engine.initialized) return 0;
     
     float speed = *(float*)&params[0];
-    float dx = cosf(g_engine.camera.rot) * speed;
-    float dy = sinf(g_engine.camera.rot) * speed;
+    float newX = g_engine.camera.x + cosf(g_engine.camera.rot) * speed;
+    float newY = g_engine.camera.y - sinf(g_engine.camera.rot) * speed;
+    
+    /* Clamp to map bounds */
+    float mapWidth = g_engine.raycaster.gridWidth * RAY_TILE_SIZE;
+    float mapHeight = g_engine.raycaster.gridHeight * RAY_TILE_SIZE;
+    if (newX < 0) newX = 0;
+    if (newX >= mapWidth) newX = mapWidth - 1;
+    if (newY < 0) newY = 0;
+    if (newY >= mapHeight) newY = mapHeight - 1;
     
     /* TODO: Implementar detección de colisiones */
-    g_engine.camera.x += dx;
-    g_engine.camera.y += dy;
+    g_engine.camera.x = newX;
+    g_engine.camera.y = newY;
     
     return 1;
 }
@@ -249,12 +258,20 @@ int64_t libmod_ray_move_backward(INSTANCE *my, int64_t *params) {
     if (!g_engine.initialized) return 0;
     
     float speed = *(float*)&params[0];
-    float dx = cosf(g_engine.camera.rot + M_PI) * speed;
-    float dy = sinf(g_engine.camera.rot + M_PI) * speed;
+    float newX = g_engine.camera.x - cosf(g_engine.camera.rot) * speed;
+    float newY = g_engine.camera.y + sinf(g_engine.camera.rot) * speed;
+    
+    /* Clamp to map bounds */
+    float mapWidth = g_engine.raycaster.gridWidth * RAY_TILE_SIZE;
+    float mapHeight = g_engine.raycaster.gridHeight * RAY_TILE_SIZE;
+    if (newX < 0) newX = 0;
+    if (newX >= mapWidth) newX = mapWidth - 1;
+    if (newY < 0) newY = 0;
+    if (newY >= mapHeight) newY = mapHeight - 1;
     
     /* TODO: Implementar detección de colisiones */
-    g_engine.camera.x += dx;
-    g_engine.camera.y += dy;
+    g_engine.camera.x = newX;
+    g_engine.camera.y = newY;
     
     return 1;
 }
@@ -263,12 +280,20 @@ int64_t libmod_ray_strafe_left(INSTANCE *my, int64_t *params) {
     if (!g_engine.initialized) return 0;
     
     float speed = *(float*)&params[0];
-    float dx = cosf(g_engine.camera.rot - M_PI / 2.0f) * speed;
-    float dy = sinf(g_engine.camera.rot - M_PI / 2.0f) * speed;
+    float newX = g_engine.camera.x + cosf(g_engine.camera.rot - M_PI / 2) * speed;
+    float newY = g_engine.camera.y - sinf(g_engine.camera.rot - M_PI / 2) * speed;
+    
+    /* Clamp to map bounds */
+    float mapWidth = g_engine.raycaster.gridWidth * RAY_TILE_SIZE;
+    float mapHeight = g_engine.raycaster.gridHeight * RAY_TILE_SIZE;
+    if (newX < 0) newX = 0;
+    if (newX >= mapWidth) newX = mapWidth - 1;
+    if (newY < 0) newY = 0;
+    if (newY >= mapHeight) newY = mapHeight - 1;
     
     /* TODO: Implementar detección de colisiones */
-    g_engine.camera.x += dx;
-    g_engine.camera.y += dy;
+    g_engine.camera.x = newX;
+    g_engine.camera.y = newY;
     
     return 1;
 }
@@ -277,12 +302,20 @@ int64_t libmod_ray_strafe_right(INSTANCE *my, int64_t *params) {
     if (!g_engine.initialized) return 0;
     
     float speed = *(float*)&params[0];
-    float dx = cosf(g_engine.camera.rot + M_PI / 2.0f) * speed;
-    float dy = sinf(g_engine.camera.rot + M_PI / 2.0f) * speed;
+    float newX = g_engine.camera.x + cosf(g_engine.camera.rot + M_PI / 2) * speed;
+    float newY = g_engine.camera.y - sinf(g_engine.camera.rot + M_PI / 2) * speed;
+    
+    /* Clamp to map bounds */
+    float mapWidth = g_engine.raycaster.gridWidth * RAY_TILE_SIZE;
+    float mapHeight = g_engine.raycaster.gridHeight * RAY_TILE_SIZE;
+    if (newX < 0) newX = 0;
+    if (newX >= mapWidth) newX = mapWidth - 1;
+    if (newY < 0) newY = 0;
+    if (newY >= mapHeight) newY = mapHeight - 1;
     
     /* TODO: Implementar detección de colisiones */
-    g_engine.camera.x += dx;
-    g_engine.camera.y += dy;
+    g_engine.camera.x = newX;
+    g_engine.camera.y = newY;
     
     return 1;
 }
@@ -393,6 +426,12 @@ int64_t libmod_ray_set_draw_minimap(INSTANCE *my, int64_t *params) {
 int64_t libmod_ray_set_draw_weapon(INSTANCE *my, int64_t *params) {
     if (!g_engine.initialized) return 0;
     g_engine.drawWeapon = (int)params[0];
+    return 1;
+}
+
+int64_t libmod_ray_set_sky_texture(INSTANCE *my, int64_t *params) {
+    if (!g_engine.initialized) return 0;
+    g_engine.skyTextureID = (int)params[0];
     return 1;
 }
 

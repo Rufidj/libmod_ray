@@ -74,6 +74,12 @@ static int any_space_below(RAY_Raycaster *rc, int x, int y, int z)
 
 static int any_space_above(RAY_Raycaster *rc, int x, int y, int z)
 {
+    /* MODIFICADO: Siempre retornar 1 para permitir renderizado multi-nivel */
+    /* Esto permite ver estructuras flotantes y torres en niveles superiores */
+    /* incluso si hay paredes en niveles inferiores */
+    return 1;
+    
+    /* Código original comentado - implementaba oclusión estricta
     if (z == 0) {
         int *grid = rc->grids[0];
         if (x >= 0 && y >= 0) {
@@ -91,6 +97,7 @@ static int any_space_above(RAY_Raycaster *rc, int x, int y, int z)
         }
     }
     return 0;
+    */
 }
 
 static int needs_next_wall(RAY_Raycaster *rc, float playerZ, int x, int y, int z)
@@ -164,7 +171,7 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
            VERTICAL LINES CHECKING
            ======================================== */
         
-        /* Encontrar coordenada X de líneas verticales */
+        /* Find x coordinate of vertical lines on the right and left */
         float vx = 0;
         if (right) {
             vx = floorf(playerX / rc->tileSize) * rc->tileSize + rc->tileSize;
@@ -172,13 +179,15 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
             vx = floorf(playerX / rc->tileSize) * rc->tileSize - 1;
         }
         
-        /* Calcular coordenada Y */
+        /* Calculate y coordinate of those lines */
         float vy = playerY + (playerX - vx) * tanf(rayAngle);
         
-        /* Calcular vector de paso */
+        /* Calculate stepping vector for each line */
         float stepx = right ? rc->tileSize : -rc->tileSize;
         float stepy = rc->tileSize * tanf(rayAngle);
         
+        /* tan() returns positive values in Quadrant 1 and Quadrant 4 but window
+         * coordinates need negative coordinates for Y-axis so we reverse */
         if (right) {
             stepy = -stepy;
         }
@@ -189,12 +198,34 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
         {
             int wallY = (int)floorf(vy / rc->tileSize);
             int wallX = (int)floorf(vx / rc->tileSize);
+            
+            /* Verificar que wallX y wallY estén dentro de los límites del grid */
+            if (wallX < 0 || wallX >= rc->gridWidth || 
+                wallY < 0 || wallY >= rc->gridHeight) {
+                break; /* Salir del loop si estamos fuera del mapa */
+            }
+            
             int wallOffset = wallX + wallY * rc->gridWidth;
             
-            /* Verificar si es una pared */
-            if (grid[wallOffset] > 0 && !ray_is_horizontal_door(grid[wallOffset])) {
+            
+            /* Verificar si es una pared o puerta */
+            if (grid[wallOffset] > 0) {
+                /* Si es una puerta horizontal en vertical raycast, ajustar posición al centro */
+                int is_door = ray_is_horizontal_door(grid[wallOffset]);
+                
                 float distX = playerX - vx;
                 float distY = playerY - vy;
+                
+                /* Para puertas, ajustar la intersección al centro del tile */
+                if (is_door) {
+                    /* Puerta horizontal está en el centro del tile verticalmente */
+                    float door_center_y = wallY * rc->tileSize + rc->tileSize / 2.0f;
+                    float door_vx = vx;
+                    float door_vy = door_center_y;
+                    distX = playerX - door_vx;
+                    distY = playerY - door_vy;
+                }
+                
                 float blockDist = distX * distX + distY * distY;
                 
                 if (blockDist > 0 && hit_count < max_hits) {
@@ -276,6 +307,13 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
         {
             int wallY = (int)floorf(hy / rc->tileSize);
             int wallX = (int)floorf(hx / rc->tileSize);
+            
+            /* Verificar que wallX y wallY estén dentro de los límites del grid */
+            if (wallX < 0 || wallX >= rc->gridWidth || 
+                wallY < 0 || wallY >= rc->gridHeight) {
+                break; /* Salir del loop si estamos fuera del mapa */
+            }
+            
             int wallOffset = wallX + wallY * rc->gridWidth;
             
             /* Verificar si es una pared */
@@ -337,8 +375,48 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
         }
     }
     
-    /* TODO: Implementar raycast de sprites */
-    /* TODO: Implementar raycast de thin walls */
+    
+    
+    /* ========================================
+       DEDUPLICACIÓN DE HITS
+       Si vertical y horizontal encontraron la misma pared,
+       solo quedarnos con el más cercano
+       ======================================== */
+    
+    /* Eliminar hits duplicados que están en la misma posición de grid */
+    for (int i = 0; i < hit_count; i++) {
+        if (hits[i].wallType == 0) continue; /* Ya eliminado */
+        
+        for (int j = i + 1; j < hit_count; j++) {
+            if (hits[j].wallType == 0) continue; /* Ya eliminado */
+            
+            /* Si ambos hits están en el mismo tile y nivel */
+            if (hits[i].wallX == hits[j].wallX && 
+                hits[i].wallY == hits[j].wallY &&
+                hits[i].level == hits[j].level) {
+                
+                /* Eliminar el más lejano */
+                if (hits[i].distance < hits[j].distance) {
+                    hits[j].wallType = 0; /* Marcar como eliminado */
+                } else {
+                    hits[i].wallType = 0; /* Marcar como eliminado */
+                    break; /* Este hit ya fue eliminado, pasar al siguiente */
+                }
+            }
+        }
+    }
+    
+    /* Compactar array eliminando hits marcados como 0 */
+    int write_idx = 0;
+    for (int read_idx = 0; read_idx < hit_count; read_idx++) {
+        if (hits[read_idx].wallType != 0) {
+            if (write_idx != read_idx) {
+                hits[write_idx] = hits[read_idx];
+            }
+            write_idx++;
+        }
+    }
+    hit_count = write_idx;
     
     *num_hits = hit_count;
 }

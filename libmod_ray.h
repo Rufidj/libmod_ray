@@ -221,10 +221,9 @@ typedef struct {
     int thick_walls_capacity;
     
     
-    /* Grids de suelo y techo - UNO POR NIVEL */
-    int **floorGrids;                /* Array de grids de suelo [nivel][x + y * width] */
-    int **ceilingGrids;              /* Array de grids de techo [nivel][x + y * width] */
-    int numFloorCeilingLevels;       /* Número de niveles con floor/ceiling */
+    /* Grids de suelo y techo - Nivel 0 solamente por ahora */
+    int *floorGrid;                  /* Grid de suelo [x + y * width] */
+    int *ceilingGrid;                /* Grid de techo [x + y * width] */
     
     /* Puertas */
     int *doors;                      /* Estado de puertas [x + y * width] */
@@ -232,7 +231,10 @@ typedef struct {
     /* FPG de texturas */
     int fpg_id;
     
-    /* Opciones de renderizado */
+    /* Skybox */
+    int skyTextureID;  /* ID de textura para el cielo (0 = color sólido) */
+    
+    /* Configuration */
     int drawMiniMap;
     int drawTexturedFloor;
     int drawCeiling;
