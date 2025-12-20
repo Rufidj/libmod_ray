@@ -138,8 +138,8 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
             int val = g_engine.raycaster.grids[level][i];
             if (val != 0) {
                 non_zero_count++;
-                /* Detectar valores corruptos (IDs de textura deberían ser < 1000) */
-                if (val < 0 || val > 1000) {
+                /* Detectar valores corruptos (IDs de textura < 2000 para incluir todas las puertas) */
+                if (val < 0 || val > 2000) {
                     printf("RAY: ADVERTENCIA - Valor corrupto detectado en grid %d[%d]: %d\n", 
                            level, i, val);
                     g_engine.raycaster.grids[level][i] = 0;
@@ -165,12 +165,25 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
         }
         */
         
-        /* DEBUG: Mostrar primeras celdas del grid */
-        printf("RAY: Grid nivel %d - %d celdas con paredes - Primeras 10: ", level, non_zero_count);
-        for (int i = 0; i < 10 && i < total_cells; i++) {
-            printf("%d ", g_engine.raycaster.grids[level][i]);
+        /* DEBUG: Contar y mostrar puertas */
+        int door_count = 0;
+        for (int i = 0; i < total_cells; i++) {
+            int val = g_engine.raycaster.grids[level][i];
+            if (val >= 1001 && val <= 2000) {
+                door_count++;
+                if (door_count <= 5) {
+                    int x = i % header.map_width;
+                    int y = i / header.map_width;
+                    printf("RAY: Puerta encontrada en nivel %d: pos(%d,%d) ID=%d\n", 
+                           level, x, y, val);
+                }
+            }
         }
-        printf("\n");
+        if (door_count > 0) {
+            printf("RAY: Total de puertas en nivel %d: %d\n", level, door_count);
+        }
+        
+        printf("RAY: Grid nivel %d - %d celdas con paredes\n", level, non_zero_count);
     }
     
     /* Leer sprites */

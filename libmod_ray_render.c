@@ -565,8 +565,39 @@ void ray_render_frame(GRAPH *dest)
                                                            rayHit->correctDistance,
                                                            g_engine.camera.z);
             
+            
+            // Convertir ID de puerta a ID de textura
+            int texture_id = rayHit->wallType;
+            if (ray_is_door(texture_id)) {
+                // Puertas verticales: 1001-1500 → restar 1000
+                // Puertas horizontales: 1501+ → restar 1500
+                if (ray_is_vertical_door(texture_id)) {
+                    texture_id = texture_id - 1000;
+                } else {
+                    texture_id = texture_id - 1500;
+                }
+                
+                // DEBUG: Mostrar cuando se renderiza una puerta (solo primeras 3)
+                static int door_render_count = 0;
+                if (door_render_count < 3) {
+                    printf("RAY_RENDER: Renderizando puerta ID=%d → textura=%d en strip %d\n",
+                           rayHit->wallType, texture_id, x);
+                    door_render_count++;
+                }
+            }
+            
             // Obtener textura de pared
-            GRAPH *wall_texture = bitmap_get(g_engine.fpg_id, rayHit->wallType);
+            GRAPH *wall_texture = bitmap_get(g_engine.fpg_id, texture_id);
+            
+            // DEBUG: Verificar si la textura se cargó
+            if (ray_is_door(rayHit->wallType)) {
+                static int texture_check_count = 0;
+                if (texture_check_count < 3) {
+                    printf("RAY_RENDER: Textura %d %s (fpg_id=%d)\n",
+                           texture_id, wall_texture ? "CARGADA" : "NO ENCONTRADA", g_engine.fpg_id);
+                    texture_check_count++;
+                }
+            }
             
             // Renderizar pared
             if (g_engine.drawWalls && wall_texture) {
@@ -574,8 +605,13 @@ void ray_render_frame(GRAPH *dest)
                                    wall_texture, rayHit->horizontal);
             }
             
-            // Renderizar suelo y techo solo para el hit más cercano
-            if (h == num_hits - 1) {  // Último hit = más cercano
+            
+            // Renderizar suelo y techo para el hit más cercano O si es una puerta
+            // (las puertas permiten ver el suelo detrás)
+            int is_closest = (h == num_hits - 1);
+            int is_door = ray_is_door(rayHit->wallType);
+            
+            if (is_closest || is_door) {
                 if (g_engine.drawTexturedFloor && g_engine.drawCeiling) {
                     ray_draw_floor_ceiling_strip(dest, rayHit, wall_screen_height, player_screen_z);
                 }
