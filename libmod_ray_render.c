@@ -13,6 +13,7 @@
 /* Forward declarations */
 extern RAY_Engine g_engine;
 extern SDL_PixelFormat *gPixelFormat;
+extern void ray_update_physics(float delta_time);
 
 /* ============================================================================
    FOG SYSTEM
@@ -411,6 +412,9 @@ void ray_render_frame(GRAPH *dest)
         return;
     }
     
+    /* Actualizar física y animaciones (asumiendo ~60 FPS) */
+    ray_update_physics(1.0f / 60.0f);
+    
     
     /* Renderizar cielo - skybox o color sólido */
     if (g_engine.skyTextureID > 0) {
@@ -568,7 +572,33 @@ void ray_render_frame(GRAPH *dest)
             
             // Convertir ID de puerta a ID de textura
             int texture_id = rayHit->wallType;
-            if (ray_is_door(texture_id)) {
+            int is_door = ray_is_door(texture_id);
+            float door_offset = 0.0f;
+            
+            static int door_detection_debug = 0;
+            
+            if (is_door) {
+                /* Obtener estado de la puerta */
+                int door_grid_offset = rayHit->wallX + rayHit->wallY * g_engine.raycaster.gridWidth;
+                
+                if (door_detection_debug < 5) {
+                    printf("RAY_RENDER: Puerta detectada! wallType=%d, pos=(%d,%d), grid_offset=%d\n",
+                           rayHit->wallType, rayHit->wallX, rayHit->wallY, door_grid_offset);
+                    door_detection_debug++;
+                }
+                
+                if (g_engine.doors && door_grid_offset >= 0 && 
+                    door_grid_offset < g_engine.raycaster.gridWidth * g_engine.raycaster.gridHeight) {
+                    RAY_Door *door = &g_engine.doors[door_grid_offset];
+                    door_offset = door->offset;
+                    
+                    if (door_detection_debug < 5) {
+                        printf("RAY_RENDER: Door state=%d, offset=%.2f, animating=%d\n",
+                               door->state, door->offset, door->animating);
+                        door_detection_debug++;
+                    }
+                }
+                
                 // Puertas verticales: 1001-1500 → restar 1000
                 // Puertas horizontales: 1501+ → restar 1500
                 if (ray_is_vertical_door(texture_id)) {
@@ -580,8 +610,8 @@ void ray_render_frame(GRAPH *dest)
                 // DEBUG: Mostrar cuando se renderiza una puerta (solo primeras 3)
                 static int door_render_count = 0;
                 if (door_render_count < 3) {
-                    printf("RAY_RENDER: Renderizando puerta ID=%d → textura=%d en strip %d\n",
-                           rayHit->wallType, texture_id, x);
+                    printf("RAY_RENDER: Renderizando puerta ID=%d → textura=%d en strip %d, offset=%.2f\n",
+                           rayHit->wallType, texture_id, x, door_offset);
                     door_render_count++;
                 }
             }
@@ -590,7 +620,7 @@ void ray_render_frame(GRAPH *dest)
             GRAPH *wall_texture = bitmap_get(g_engine.fpg_id, texture_id);
             
             // DEBUG: Verificar si la textura se cargó
-            if (ray_is_door(rayHit->wallType)) {
+            if (is_door) {
                 static int texture_check_count = 0;
                 if (texture_check_count < 3) {
                     printf("RAY_RENDER: Textura %d %s (fpg_id=%d)\n",
@@ -601,15 +631,52 @@ void ray_render_frame(GRAPH *dest)
             
             // Renderizar pared
             if (g_engine.drawWalls && wall_texture) {
+                /* Aplicar offset de animación a la coordenada de textura */
+                if (is_door && door_offset > 0.0f) {
+                    static int door_offset_debug = 0;
+                    if (door_offset_debug < 10) {
+                        printf("RAY_RENDER: Aplicando offset %.2f a puerta, tileX original=%.2f\n", 
+                               door_offset, rayHit->tileX);
+                        door_offset_debug++;
+                    }
+                    
+                    /* Para puertas verticales, deslizar horizontalmente */
+                    if (ray_is_vertical_door(rayHit->wallType)) {
+                        /* Modificar tileX para crear efecto de deslizamiento */
+                        rayHit->tileX += door_offset * RAY_TILE_SIZE;
+                        
+                        if (door_offset_debug < 10) {
+                            printf("RAY_RENDER: tileX después de offset=%.2f, RAY_TILE_SIZE=%d\n", 
+                                   rayHit->tileX, RAY_TILE_SIZE);
+                        }
+                        
+                        /* Si tileX sale del rango de la textura, la puerta está "fuera de vista" */
+                        if (rayHit->tileX >= RAY_TILE_SIZE) {
+                            /* Puerta completamente abierta - no renderizar */
+                            if (door_offset_debug < 10) {
+                                printf("RAY_RENDER: Puerta fuera de vista, saltando renderizado\n");
+                                door_offset_debug++;
+                            }
+                            goto skip_wall_render;
+                        }
+                    } else {
+                        /* Para puertas horizontales, también deslizar */
+                        rayHit->tileX += door_offset * RAY_TILE_SIZE;
+                        if (rayHit->tileX >= RAY_TILE_SIZE) {
+                            goto skip_wall_render;
+                        }
+                    }
+                }
+                
                 ray_draw_wall_strip(dest, rayHit, wall_screen_height, player_screen_z,
                                    wall_texture, rayHit->horizontal);
             }
             
+            skip_wall_render:
             
             // Renderizar suelo y techo para el hit más cercano O si es una puerta
             // (las puertas permiten ver el suelo detrás)
             int is_closest = (h == num_hits - 1);
-            int is_door = ray_is_door(rayHit->wallType);
             
             if (is_closest || is_door) {
                 if (g_engine.drawTexturedFloor && g_engine.drawCeiling) {

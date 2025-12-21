@@ -98,6 +98,17 @@ typedef struct RAY_ThickWall {
 } RAY_ThickWall;
 
 /* ============================================================================
+   DOORS
+   ============================================================================ */
+
+typedef struct {
+    int state;           /* 0 = cerrada, 1 = abierta */
+    float offset;        /* 0.0 a 1.0 - progreso de animación */
+    int animating;       /* 1 si está animándose */
+    float anim_speed;    /* Velocidad de animación (unidades por segundo) */
+} RAY_Door;
+
+/* ============================================================================
    SPRITES
    ============================================================================ */
 
@@ -226,7 +237,7 @@ typedef struct {
     int *ceilingGrid;                /* Grid de techo [x + y * width] */
     
     /* Puertas */
-    int *doors;                      /* Estado de puertas [x + y * width] */
+    RAY_Door *doors;                 /* Estado de puertas [x + y * width] */
     
     /* FPG de texturas */
     int fpg_id;

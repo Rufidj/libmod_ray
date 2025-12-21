@@ -408,7 +408,20 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
     }
     
     /* Inicializar array de puertas */
-    g_engine.doors = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+    g_engine.doors = (RAY_Door*)calloc(header.map_width * header.map_height, sizeof(RAY_Door));
+    if (!g_engine.doors) {
+        fprintf(stderr, "RAY: Error al asignar memoria para doors\n");
+        fclose(f);
+        return 0;
+    }
+    
+    /* Inicializar todas las puertas */
+    for (int i = 0; i < header.map_width * header.map_height; i++) {
+        g_engine.doors[i].state = 0;        /* Cerrada */
+        g_engine.doors[i].offset = 0.0f;    /* Sin offset */
+        g_engine.doors[i].animating = 0;    /* No animándose */
+        g_engine.doors[i].anim_speed = 2.0f; /* Velocidad de animación */
+    }
     
     fclose(f);
     

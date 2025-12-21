@@ -359,10 +359,63 @@ int64_t libmod_ray_jump(INSTANCE *my, int64_t *params) {
 }
 
 /* ============================================================================
+   DOOR ANIMATION UPDATE
+   ============================================================================ */
+
+void ray_update_doors(float delta_time) {
+    if (!g_engine.doors || !g_engine.initialized) return;
+    
+    int total_doors = g_engine.raycaster.gridWidth * g_engine.raycaster.gridHeight;
+    static int debug_count = 0;
+    
+    for (int i = 0; i < total_doors; i++) {
+        RAY_Door *door = &g_engine.doors[i];
+        
+        if (!door->animating) continue;
+        
+        /* Calcular incremento de offset basado en velocidad y delta time */
+        float increment = door->anim_speed * delta_time;
+        
+        if (door->state == 1) {
+            /* Abriendo - incrementar offset hacia 1.0 */
+            door->offset += increment;
+            if (door->offset >= 1.0f) {
+                door->offset = 1.0f;
+                door->animating = 0; /* Animación completa */
+                if (debug_count < 5) {
+                    printf("RAY: Puerta %d completó animación de APERTURA, offset=%.2f\n", i, door->offset);
+                    debug_count++;
+                }
+            } else if (debug_count < 20) {
+                printf("RAY: Puerta %d animando APERTURA, offset=%.2f\n", i, door->offset);
+                debug_count++;
+            }
+        } else {
+            /* Cerrando - decrementar offset hacia 0.0 */
+            door->offset -= increment;
+            if (door->offset <= 0.0f) {
+                door->offset = 0.0f;
+                door->animating = 0; /* Animación completa */
+                if (debug_count < 5) {
+                    printf("RAY: Puerta %d completó animación de CIERRE, offset=%.2f\n", i, door->offset);
+                    debug_count++;
+                }
+            } else if (debug_count < 20) {
+                printf("RAY: Puerta %d animando CIERRE, offset=%.2f\n", i, door->offset);
+                debug_count++;
+            }
+        }
+    }
+}
+
+/* ============================================================================
    UPDATE - Actualización de física (llamar cada frame)
    ============================================================================ */
 
 void ray_update_physics(float delta_time) {
+    /* Actualizar animaciones de puertas */
+    ray_update_doors(delta_time);
+    
     /* Constantes de salto (del motor original) */
     const float MAX_JUMP_DISTANCE = 3.0f * RAY_TILE_SIZE;
     const float HALF_JUMP_DISTANCE = MAX_JUMP_DISTANCE / 2.0f;
@@ -441,18 +494,125 @@ int64_t libmod_ray_set_sky_texture(INSTANCE *my, int64_t *params) {
 
 int64_t libmod_ray_toggle_door(INSTANCE *my, int64_t *params) {
     if (!g_engine.initialized) return 0;
-    
-    int cellX = (int)params[0];
-    int cellY = (int)params[1];
-    
     if (!g_engine.doors) return 0;
-    if (cellX < 0 || cellX >= g_engine.raycaster.gridWidth) return 0;
-    if (cellY < 0 || cellY >= g_engine.raycaster.gridHeight) return 0;
     
-    int offset = cellX + cellY * g_engine.raycaster.gridWidth;
-    g_engine.doors[offset] = !g_engine.doors[offset];
+    /* Hacer un raycast simple para encontrar la puerta más cercana frente al jugador */
+    float rayAngle = g_engine.camera.rot;
+    int playerX = (int)g_engine.camera.x;
+    int playerY = (int)g_engine.camera.y;
     
-    return 1;
+    /* Normalizar ángulo */
+    while (rayAngle < 0) rayAngle += RAY_TWO_PI;
+    while (rayAngle >= RAY_TWO_PI) rayAngle -= RAY_TWO_PI;
+    
+    /* Determinar cuadrante */
+    int right = (rayAngle < RAY_TWO_PI * 0.25f && rayAngle >= 0) ||
+                (rayAngle > RAY_TWO_PI * 0.75f);
+    int up = rayAngle < RAY_TWO_PI * 0.5f && rayAngle >= 0;
+    
+    int *grid = g_engine.raycaster.grids[0]; /* Solo nivel 0 por ahora */
+    int tileSize = RAY_TILE_SIZE;
+    
+    /* Buscar intersección vertical */
+    float vx = right ? (floorf(playerX / tileSize) * tileSize + tileSize)
+                     : (floorf(playerX / tileSize) * tileSize - 1);
+    float vy = playerY + (playerX - vx) * tanf(rayAngle);
+    float stepx = right ? tileSize : -tileSize;
+    float stepy = tileSize * tanf(rayAngle);
+    if (right) stepy = -stepy;
+    
+    float min_door_dist = FLT_MAX;
+    int door_x = -1, door_y = -1;
+    
+    /* Recorrer líneas verticales */
+    for (int i = 0; i < 20; i++) { /* Máximo 20 pasos */
+        if (vx < 0 || vx >= g_engine.raycaster.gridWidth * tileSize ||
+            vy < 0 || vy >= g_engine.raycaster.gridHeight * tileSize) break;
+        
+        int wallY = (int)floorf(vy / tileSize);
+        int wallX = (int)floorf(vx / tileSize);
+        
+        if (wallX >= 0 && wallX < g_engine.raycaster.gridWidth &&
+            wallY >= 0 && wallY < g_engine.raycaster.gridHeight) {
+            
+            int wallType = grid[wallX + wallY * g_engine.raycaster.gridWidth];
+            
+            if (ray_is_door(wallType) && !ray_is_horizontal_door(wallType)) {
+                float dx = playerX - vx;
+                float dy = playerY - vy;
+                float dist = sqrtf(dx * dx + dy * dy);
+                
+                if (dist < min_door_dist) {
+                    min_door_dist = dist;
+                    door_x = wallX;
+                    door_y = wallY;
+                }
+                break;
+            }
+        }
+        
+        vx += stepx;
+        vy += stepy;
+    }
+    
+    /* Buscar intersección horizontal */
+    float hy = up ? (floorf(playerY / tileSize) * tileSize - 1)
+                  : (floorf(playerY / tileSize) * tileSize + tileSize);
+    float hx = playerX + (playerY - hy) / tanf(rayAngle);
+    stepy = up ? -tileSize : tileSize;
+    stepx = tileSize / tanf(rayAngle);
+    if (!up) stepx = -stepx;
+    
+    /* Recorrer líneas horizontales */
+    for (int i = 0; i < 20; i++) {
+        if (hx < 0 || hx >= g_engine.raycaster.gridWidth * tileSize ||
+            hy < 0 || hy >= g_engine.raycaster.gridHeight * tileSize) break;
+        
+        int wallY = (int)floorf(hy / tileSize);
+        int wallX = (int)floorf(hx / tileSize);
+        
+        if (wallX >= 0 && wallX < g_engine.raycaster.gridWidth &&
+            wallY >= 0 && wallY < g_engine.raycaster.gridHeight) {
+            
+            int wallType = grid[wallX + wallY * g_engine.raycaster.gridWidth];
+            
+            if (ray_is_door(wallType) && !ray_is_vertical_door(wallType)) {
+                float dx = playerX - hx;
+                float dy = playerY - hy;
+                float dist = sqrtf(dx * dx + dy * dy);
+                
+                if (dist < min_door_dist) {
+                    min_door_dist = dist;
+                    door_x = wallX;
+                    door_y = wallY;
+                }
+                break;
+            }
+        }
+        
+        hx += stepx;
+        hy += stepy;
+    }
+    
+    /* Si encontramos una puerta, togglearla */
+    if (door_x >= 0 && door_y >= 0 && min_door_dist < RAY_TILE_SIZE * 2.0f) {
+        int offset = door_x + door_y * g_engine.raycaster.gridWidth;
+        RAY_Door *door = &g_engine.doors[offset];
+        
+        /* Toggle state */
+        door->state = !door->state;
+        
+        /* Iniciar animación */
+        door->animating = 1;
+        
+        printf("RAY: Puerta detectada automáticamente en (%d, %d) cambiada a estado %d, iniciando animación\n", 
+               door_x, door_y, door->state);
+        
+        return 1;
+    }
+    
+    printf("RAY: No se encontró puerta frente al jugador\n");
+    return 0;
 }
 
 /* ============================================================================
