@@ -230,12 +230,15 @@ static void ray_draw_floor_ceiling_strip(GRAPH *dest, RAY_RayHit *rayHit,
         return; // No ceiling data
     }
     
+    /* REVERTIDO: Volver a la versión original que funcionaba
+     * TODO: Encontrar una mejor solución para la altura del techo */
     int ceiling_end_y = (g_engine.displayHeight - wall_screen_height) / 2;
     ceiling_end_y += (int)player_screen_z;
     
     for (int screen_y = 0; screen_y < ceiling_end_y && screen_y < g_engine.displayHeight; screen_y++) {
         if (center_plane - screen_y <= 0) continue;
         
+        /* Usando highestCeilingLevel como antes (funciona pero altura incorrecta) */
         float ratio = (g_engine.highestCeilingLevel * RAY_TILE_SIZE - eye_height) / 
                      (center_plane - screen_y);
         float straight_distance = g_engine.viewDist * ratio;
@@ -431,24 +434,32 @@ void ray_render_frame(GRAPH *dest)
         /* Renderizar skybox texture */
         GRAPH *sky_texture = bitmap_get(g_engine.fpg_id, g_engine.skyTextureID);
         if (sky_texture) {
-            /* Skybox cilíndrico - mapear textura horizontalmente según rotación de cámara */
-            float angle_per_pixel = (2.0f * M_PI) / dest->width;
+            /* Skybox panorámico simple
+             * La textura representa 360° horizontalmente
+             * Mapear la rotación de la cámara + FOV a la textura */
+            
+            int sky_height = dest->height / 2;
             
             for (int x = 0; x < dest->width; x++) {
-                /* Calcular ángulo para este pixel */
-                float pixel_angle = g_engine.camera.rot + (x - dest->width / 2) * angle_per_pixel;
+                /* Calcular el ángulo para este pixel de pantalla
+                 * Basado en FOV y posición en pantalla */
+                float fov_rad = g_engine.fovRadians;
+                float screen_angle = ((float)x / dest->width - 0.5f) * fov_rad;
+                float total_angle = g_engine.camera.rot + screen_angle;
                 
-                /* Normalizar ángulo a [0, 2π] */
-                while (pixel_angle < 0) pixel_angle += 2.0f * M_PI;
-                while (pixel_angle >= 2.0f * M_PI) pixel_angle -= 2.0f * M_PI;
+                /* Normalizar a [0, 2π] */
+                total_angle = fmodf(total_angle, 2.0f * M_PI);
+                if (total_angle < 0) total_angle += 2.0f * M_PI;
                 
-                /* Mapear a coordenada X de textura */
-                int tex_x = (int)(pixel_angle / (2.0f * M_PI) * sky_texture->width) % sky_texture->width;
+                /* Mapear a coordenada X de textura (0 a width-1) */
+                int tex_x = (int)((total_angle / (2.0f * M_PI)) * sky_texture->width);
+                if (tex_x >= sky_texture->width) tex_x = sky_texture->width - 1;
+                if (tex_x < 0) tex_x = 0;
                 
-                /* Dibujar columna vertical del skybox */
-                for (int y = 0; y < dest->height / 2; y++) {
+                /* Dibujar columna vertical */
+                for (int y = 0; y < sky_height; y++) {
                     /* Mapear Y de pantalla a Y de textura */
-                    int tex_y = (y * sky_texture->height) / (dest->height / 2);
+                    int tex_y = (y * sky_texture->height) / sky_height;
                     if (tex_y >= sky_texture->height) tex_y = sky_texture->height - 1;
                     
                     uint32_t pixel = ray_sample_texture(sky_texture, tex_x, tex_y);
@@ -620,7 +631,8 @@ void ray_render_frame(GRAPH *dest)
         }
         
         // Renderizar suelo y techo para este strip
-        if (g_engine.drawTexturedFloor && g_engine.drawCeiling) {
+        // CORREGIDO: Usar OR (||) en lugar de AND (&&) para permitir renderizado independiente
+        if (g_engine.drawTexturedFloor || g_engine.drawCeiling) {
             ray_draw_floor_ceiling_strip(dest, &floor_hit, wall_screen_height, player_screen_z);
         }
     }

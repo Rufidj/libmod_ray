@@ -26,7 +26,7 @@ BEGIN
     set_mode(screen_w, screen_h);
     set_fps(0, 0);
     window_set_title("Raycasting Engine Test");
-    
+
     // Cargar FPG con texturas
     fpg_textures = fpg_load("textures.fpg");
     if (fpg_textures < 0)
