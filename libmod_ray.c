@@ -280,8 +280,8 @@ int64_t libmod_ray_strafe_left(INSTANCE *my, int64_t *params) {
     if (!g_engine.initialized) return 0;
     
     float speed = *(float*)&params[0];
-    float newX = g_engine.camera.x + cosf(g_engine.camera.rot - M_PI / 2) * speed;
-    float newY = g_engine.camera.y - sinf(g_engine.camera.rot - M_PI / 2) * speed;
+    float newX = g_engine.camera.x + cosf(g_engine.camera.rot + M_PI / 2) * speed;
+    float newY = g_engine.camera.y - sinf(g_engine.camera.rot + M_PI / 2) * speed;
     
     /* Clamp to map bounds */
     float mapWidth = g_engine.raycaster.gridWidth * RAY_TILE_SIZE;
@@ -302,8 +302,8 @@ int64_t libmod_ray_strafe_right(INSTANCE *my, int64_t *params) {
     if (!g_engine.initialized) return 0;
     
     float speed = *(float*)&params[0];
-    float newX = g_engine.camera.x + cosf(g_engine.camera.rot + M_PI / 2) * speed;
-    float newY = g_engine.camera.y - sinf(g_engine.camera.rot + M_PI / 2) * speed;
+    float newX = g_engine.camera.x + cosf(g_engine.camera.rot - M_PI / 2) * speed;
+    float newY = g_engine.camera.y - sinf(g_engine.camera.rot - M_PI / 2) * speed;
     
     /* Clamp to map bounds */
     float mapWidth = g_engine.raycaster.gridWidth * RAY_TILE_SIZE;
@@ -324,7 +324,7 @@ int64_t libmod_ray_rotate(INSTANCE *my, int64_t *params) {
     if (!g_engine.initialized) return 0;
     
     float delta = *(float*)&params[0];
-    g_engine.camera.rot += delta;
+    g_engine.camera.rot -= delta;  /* Invertido para rotar en la dirección correcta */
     
     /* Normalizar ángulo */
     while (g_engine.camera.rot < 0) g_engine.camera.rot += RAY_TWO_PI;
