@@ -20,6 +20,7 @@ PRIVATE
     float pitch_speed = 0.02;
     int fog_key_pressed = 0;
     int minimap_key_pressed = 0;
+    int enter_key_pressed = 0;  // Añadido para debounce de Enter
     float cam_x, cam_y;
 BEGIN
     set_mode(screen_w, screen_h);
@@ -101,9 +102,12 @@ BEGIN
         
         // ===== INTERACCIÓN CON PUERTAS =====
         if (key(_enter))
-            cam_x = RAY_GET_CAMERA_X();
-            cam_y = RAY_GET_CAMERA_Y();
-            RAY_TOGGLE_DOOR();
+            if (enter_key_pressed == 0)
+                RAY_TOGGLE_DOOR();
+                enter_key_pressed = 1;
+            end
+        else
+            enter_key_pressed = 0;
         end
         
         // ===== OPCIONES DE VISUALIZACIÓN =====

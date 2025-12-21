@@ -157,10 +157,20 @@ static void ray_draw_floor_ceiling_strip(GRAPH *dest, RAY_RayHit *rayHit,
         return; // No floor data
     }
     
-    int floor_start_y = (g_engine.displayHeight - wall_screen_height) / 2 + wall_screen_height;
-    floor_start_y += (int)player_screen_z;
-    if (floor_start_y < center_plane) {
+    int floor_start_y;
+    
+    if (wall_screen_height == 0) {
+        // No hay paredes sólidas - renderizar desde el centro
         floor_start_y = (int)center_plane;
+    } else {
+        // Hay paredes - renderizar DESPUÉS de la pared para no sobreescribirla
+        floor_start_y = (g_engine.displayHeight - wall_screen_height) / 2 + wall_screen_height;
+        floor_start_y += (int)player_screen_z;
+        
+        // Asegurar que no empiece antes del centro
+        if (floor_start_y < center_plane) {
+            floor_start_y = (int)center_plane;
+        }
     }
     
     for (int screen_y = floor_start_y; screen_y < g_engine.displayHeight; screen_y++) {
@@ -547,6 +557,78 @@ void ray_render_frame(GRAPH *dest)
     
     /* Total hits calculated */
     
+    // ========================================
+    // FLOOR AND CEILING RENDERING FIRST
+    // Renderizar ANTES de las paredes para que las paredes se dibujen encima
+    // ========================================
+    
+    for (int x = 0; x < g_engine.rayCount; x++) {
+        int num_hits = rayhit_counts[x];
+        RAY_RayHit *hits = &all_rayhits[x * RAY_MAX_RAYHITS];
+        
+        // Calcular parámetros de renderizado basados en el hit más cercano QUE NO SEA PUERTA
+        int wall_screen_height = 0;  // Por defecto 0 para que el suelo se vea completo
+        float player_screen_z = 0.0f;
+        
+        // Crear un rayHit para este strip
+        RAY_RayHit floor_hit;
+        floor_hit.strip = x;
+        floor_hit.rayAngle = g_engine.camera.rot + g_engine.stripAngles[x];
+        
+        // Buscar si hay puertas en este strip
+        int has_door = 0;
+        for (int h = 0; h < num_hits; h++) {
+            if (ray_is_door(hits[h].wallType)) {
+                has_door = 1;
+                break;
+            }
+        }
+        
+        // Si hay una puerta, SIEMPRE usar wall_height=0 para ver el suelo completo
+        if (has_door) {
+            floor_hit.correctDistance = RAY_TILE_SIZE * 10.0f;
+            wall_screen_height = 0;  // Ver suelo completo a través de puertas
+            
+            static int debug_floor = 0;
+            if (debug_floor < 3) {
+                printf("RAY_FLOOR: Strip %d tiene PUERTA - forzando wall_height=0 para ver suelo\n", x);
+                debug_floor++;
+            }
+        } else {
+            // No hay puertas - buscar pared más cercana para clipear correctamente
+            RAY_RayHit *closest_wall = NULL;
+            for (int h = num_hits - 1; h >= 0; h--) {
+                closest_wall = &hits[h];
+                break;
+            }
+            
+            if (closest_wall) {
+                floor_hit.correctDistance = closest_wall->correctDistance;
+                
+                wall_screen_height = (int)ray_strip_screen_height(g_engine.viewDist,
+                                                                   closest_wall->correctDistance,
+                                                                   RAY_TILE_SIZE);
+                
+                player_screen_z = ray_strip_screen_height(g_engine.viewDist,
+                                                          closest_wall->correctDistance,
+                                                          g_engine.camera.z);
+            } else {
+                // No hay hits - espacio abierto
+                floor_hit.correctDistance = RAY_TILE_SIZE * 10.0f;
+                wall_screen_height = 0;
+            }
+        }
+        
+        // Renderizar suelo y techo para este strip
+        if (g_engine.drawTexturedFloor && g_engine.drawCeiling) {
+            ray_draw_floor_ceiling_strip(dest, &floor_hit, wall_screen_height, player_screen_z);
+        }
+    }
+    
+    // ========================================
+    // WALL RENDERING
+    // Renderizar paredes DESPUÉS del suelo
+    // ========================================
     
     /* Renderizar cada strip */
     for (int x = 0; x < g_engine.rayCount; x++) {
@@ -631,38 +713,53 @@ void ray_render_frame(GRAPH *dest)
             
             // Renderizar pared
             if (g_engine.drawWalls && wall_texture) {
-                /* Aplicar offset de animación a la coordenada de textura */
+                /* Aplicar offset de animación */
                 if (is_door && door_offset > 0.0f) {
                     static int door_offset_debug = 0;
-                    if (door_offset_debug < 10) {
-                        printf("RAY_RENDER: Aplicando offset %.2f a puerta, tileX original=%.2f\n", 
-                               door_offset, rayHit->tileX);
-                        door_offset_debug++;
-                    }
                     
-                    /* Para puertas verticales, deslizar horizontalmente */
+                    /* Para puertas VERTICALES, deslizar horizontalmente (modificar tileX) */
                     if (ray_is_vertical_door(rayHit->wallType)) {
-                        /* Modificar tileX para crear efecto de deslizamiento */
-                        rayHit->tileX += door_offset * RAY_TILE_SIZE;
-                        
                         if (door_offset_debug < 10) {
-                            printf("RAY_RENDER: tileX después de offset=%.2f, RAY_TILE_SIZE=%d\n", 
-                                   rayHit->tileX, RAY_TILE_SIZE);
+                            printf("RAY_RENDER: Puerta VERTICAL - offset %.2f, tileX original=%.2f\n", 
+                                   door_offset, rayHit->tileX);
+                            door_offset_debug++;
                         }
+                        
+                        /* Modificar tileX para crear efecto de deslizamiento horizontal */
+                        rayHit->tileX += door_offset * RAY_TILE_SIZE;
                         
                         /* Si tileX sale del rango de la textura, la puerta está "fuera de vista" */
                         if (rayHit->tileX >= RAY_TILE_SIZE) {
                             /* Puerta completamente abierta - no renderizar */
                             if (door_offset_debug < 10) {
-                                printf("RAY_RENDER: Puerta fuera de vista, saltando renderizado\n");
+                                printf("RAY_RENDER: Puerta vertical fuera de vista\n");
                                 door_offset_debug++;
                             }
                             goto skip_wall_render;
                         }
-                    } else {
-                        /* Para puertas horizontales, también deslizar */
-                        rayHit->tileX += door_offset * RAY_TILE_SIZE;
-                        if (rayHit->tileX >= RAY_TILE_SIZE) {
+                    } 
+                    /* Para puertas HORIZONTALES, deslizar verticalmente (reducir altura) */
+                    else {
+                        if (door_offset_debug < 10) {
+                            printf("RAY_RENDER: Puerta HORIZONTAL - offset %.2f, altura original=%d\n", 
+                                   door_offset, wall_screen_height);
+                            door_offset_debug++;
+                        }
+                        
+                        /* Reducir altura de pared para crear efecto de deslizamiento vertical */
+                        int original_height = wall_screen_height;
+                        wall_screen_height = (int)(wall_screen_height * (1.0f - door_offset));
+                        
+                        /* Ajustar player_screen_z para que la puerta se deslice desde abajo hacia arriba */
+                        /* RESTAR la diferencia para que suba en lugar de bajar */
+                        player_screen_z -= (original_height - wall_screen_height);
+                        
+                        /* Si la altura es muy pequeña, no renderizar */
+                        if (wall_screen_height < 2) {
+                            if (door_offset_debug < 10) {
+                                printf("RAY_RENDER: Puerta horizontal completamente abierta\n");
+                                door_offset_debug++;
+                            }
                             goto skip_wall_render;
                         }
                     }
@@ -672,27 +769,17 @@ void ray_render_frame(GRAPH *dest)
                                    wall_texture, rayHit->horizontal);
             }
             
-            skip_wall_render:
+            skip_wall_render:;
             
-            // Renderizar suelo y techo para el hit más cercano O si es una puerta
-            // (las puertas permiten ver el suelo detrás)
-            int is_closest = (h == num_hits - 1);
-            
-            if (is_closest || is_door) {
-                if (g_engine.drawTexturedFloor && g_engine.drawCeiling) {
-                    ray_draw_floor_ceiling_strip(dest, rayHit, wall_screen_height, player_screen_z);
-                }
-            }
+            // Suelo ya renderizado ANTES de las paredes
         }
     }
     
-    // Renderizar sprites
+    // Renderizar sprites (después de paredes)
     ray_draw_sprites(dest, z_buffer);
     
     // Liberar memoria
     free(all_rayhits);
     free(rayhit_counts);
     free(z_buffer);
-    
-    /* Frame complete */
 }
