@@ -208,24 +208,11 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
             int wallOffset = wallX + wallY * rc->gridWidth;
             
             
-            /* Verificar si es una pared o puerta */
-            if (grid[wallOffset] > 0) {
-                /* Si es una puerta horizontal en vertical raycast, ajustar posición al centro */
-                int is_door = ray_is_horizontal_door(grid[wallOffset]);
+            /* Check if current cell is a wall (exclude horizontal doors in vertical raycast) */
+            if (grid[wallOffset] > 0 && !ray_is_horizontal_door(grid[wallOffset])) {
                 
                 float distX = playerX - vx;
                 float distY = playerY - vy;
-                
-                /* Para puertas, ajustar la intersección al centro del tile */
-                if (is_door) {
-                    /* Puerta horizontal está en el centro del tile verticalmente */
-                    float door_center_y = wallY * rc->tileSize + rc->tileSize / 2.0f;
-                    float door_vx = vx;
-                    float door_vy = door_center_y;
-                    distX = playerX - door_vx;
-                    distY = playerY - door_vy;
-                }
-                
                 float blockDist = distX * distX + distY * distY;
                 
                 if (blockDist > 0 && hit_count < max_hits) {
@@ -233,14 +220,8 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
                     texX = right ? texX : rc->tileSize - texX;
                     
                     RAY_RayHit *rayHit = &hits[hit_count];
-                    /* Para puertas, usar coordenadas ajustadas al centro */
-                    if (is_door) {
-                        rayHit->x = vx;
-                        rayHit->y = wallY * rc->tileSize + rc->tileSize / 2.0f;
-                    } else {
-                        rayHit->x = vx;
-                        rayHit->y = vy;
-                    }
+                    rayHit->x = vx;
+                    rayHit->y = vy;
                     rayHit->rayAngle = rayAngle;
                     rayHit->strip = stripIdx;
                     rayHit->wallType = grid[wallOffset];
@@ -251,32 +232,18 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
                     rayHit->right = right;
                     rayHit->distance = sqrtf(blockDist);
                     rayHit->sortdistance = rayHit->distance;
-                    rayHit->correctDistance = rayHit->distance * cosf(stripAngle);
-                    rayHit->horizontal = 0;
-                    rayHit->tileX = texX;
                     rayHit->sprite = NULL;
                     rayHit->thinWall = NULL;
                     rayHit->wallHeight = rc->tileSize;
                     
-                    /* Manejo especial para puertas verticales */
-                    if (ray_is_vertical_door(grid[wallOffset])) {
-                        int newWallY = (int)floorf((vy + stepy / 2) / rc->tileSize);
-                        int newWallX = (int)floorf((vx + stepx / 2) / rc->tileSize);
-                        if (newWallY == wallY && newWallX == wallX) {
-                            float halfDistance = stepx / 2 * stepx / 2 + stepy / 2 * stepy / 2;
-                            float halfDistanceSquared = sqrtf(halfDistance);
-                            rayHit->distance += halfDistanceSquared;
-                            texX = fmod2(vy + stepy / 2, rc->tileSize);
-                            rayHit->sortdistance -= 1; /* Prioridad menor para puertas */
-                            rayHit->correctDistance = rayHit->distance * cosf(stripAngle);
-                            rayHit->tileX = texX;
-                        }
-                    }
+                    rayHit->correctDistance = rayHit->distance * cosf(stripAngle);
+                    rayHit->horizontal = 0;
+                    rayHit->tileX = texX;
                     
                     hit_count++;
                     
-                    /* Si no hay espacios, terminar búsqueda */
-                    if (!needs_next_wall(rc, playerZ, wallX, wallY, level)) {
+                    int gaps = needs_next_wall(rc, playerZ, wallX, wallY, level);
+                    if (!gaps) {
                         break;
                     }
                 }
@@ -323,24 +290,11 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
             int wallOffset = wallX + wallY * rc->gridWidth;
             
             
-            /* Verificar si es una pared o puerta */
-            if (grid[wallOffset] > 0) {
-                /* Si es una puerta vertical en horizontal raycast, ajustar posición al centro */
-                int is_door = ray_is_vertical_door(grid[wallOffset]);
+            /* Check if current cell is a wall (exclude vertical doors in horizontal raycast) */
+            if (grid[wallOffset] > 0 && !ray_is_vertical_door(grid[wallOffset])) {
                 
                 float distX = playerX - hx;
                 float distY = playerY - hy;
-                
-                /* Para puertas, ajustar la intersección al centro del tile */
-                if (is_door) {
-                    /* Puerta vertical está en el centro del tile horizontalmente */
-                    float door_center_x = wallX * rc->tileSize + rc->tileSize / 2.0f;
-                    float door_hx = door_center_x;
-                    float door_hy = hy;
-                    distX = playerX - door_hx;
-                    distY = playerY - door_hy;
-                }
-                
                 float blockDist = distX * distX + distY * distY;
                 
                 if (blockDist > 0 && hit_count < max_hits) {
@@ -348,14 +302,8 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
                     texX = up ? rc->tileSize - texX : texX;
                     
                     RAY_RayHit *rayHit = &hits[hit_count];
-                    /* Para puertas verticales, usar coordenadas ajustadas al centro */
-                    if (is_door) {
-                        rayHit->x = wallX * rc->tileSize + rc->tileSize / 2.0f;
-                        rayHit->y = hy;
-                    } else {
-                        rayHit->x = hx;
-                        rayHit->y = hy;
-                    }
+                    rayHit->x = hx;
+                    rayHit->y = hy;
                     rayHit->rayAngle = rayAngle;
                     rayHit->strip = stripIdx;
                     rayHit->wallType = grid[wallOffset];
@@ -366,32 +314,18 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
                     rayHit->right = right;
                     rayHit->distance = sqrtf(blockDist);
                     rayHit->sortdistance = rayHit->distance;
-                    rayHit->correctDistance = rayHit->distance * cosf(stripAngle);
-                    rayHit->horizontal = 1;
-                    rayHit->tileX = texX;
                     rayHit->sprite = NULL;
                     rayHit->thinWall = NULL;
                     rayHit->wallHeight = rc->tileSize;
                     
-                    /* Manejo especial para puertas horizontales */
-                    if (ray_is_horizontal_door(grid[wallOffset])) {
-                        int newWallY = (int)floorf((hy + stepy / 2) / rc->tileSize);
-                        int newWallX = (int)floorf((hx + stepx / 2) / rc->tileSize);
-                        if (newWallY == wallY && newWallX == wallX) {
-                            float halfDistance = stepx / 2 * stepx / 2 + stepy / 2 * stepy / 2;
-                            float halfDistanceSquared = sqrtf(halfDistance);
-                            rayHit->distance += halfDistanceSquared;
-                            texX = fmod2(hx + stepx / 2, rc->tileSize);
-                            rayHit->sortdistance -= 1;
-                            rayHit->correctDistance = rayHit->distance * cosf(stripAngle);
-                            rayHit->tileX = texX;
-                        }
-                    }
+                    rayHit->correctDistance = rayHit->distance * cosf(stripAngle);
+                    rayHit->horizontal = 1;
+                    rayHit->tileX = texX;
                     
                     hit_count++;
                     
-                    /* Si no hay espacios, terminar búsqueda */
-                    if (!needs_next_wall(rc, playerZ, wallX, wallY, level)) {
+                    int gaps = needs_next_wall(rc, playerZ, wallX, wallY, level);
+                    if (!gaps) {
                         break;
                     }
                 }

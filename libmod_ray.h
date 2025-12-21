@@ -35,8 +35,8 @@
 
 /* Tipos de puertas (compatibilidad con motor original) */
 #define RAY_DOOR_VERTICAL_MIN 1000
-#define RAY_DOOR_VERTICAL_MAX 1500
-#define RAY_DOOR_HORIZONTAL_MIN 1501
+#define RAY_DOOR_VERTICAL_MAX 1499
+#define RAY_DOOR_HORIZONTAL_MIN 1500
 
 /* ============================================================================
    ESTRUCTURAS BÁSICAS
