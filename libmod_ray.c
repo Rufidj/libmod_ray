@@ -15,6 +15,9 @@
 
 RAY_Engine g_engine = {0};
 
+/* Render graph global (como en OLD) */
+static GRAPH *render_graph = NULL;
+
 /* ============================================================================
    UTILIDADES
    ============================================================================ */
@@ -166,6 +169,12 @@ int64_t libmod_ray_shutdown(INSTANCE *my, int64_t *params) {
         g_engine.doors = NULL;
     }
     
+    /* Liberar render graph */
+    if (render_graph) {
+        bitmap_destroy(render_graph);
+        render_graph = NULL;
+    }
+    
     memset(&g_engine, 0, sizeof(RAY_Engine));
     
     printf("RAY: Motor finalizado\n");
@@ -197,9 +206,10 @@ int64_t libmod_ray_get_camera_rot(INSTANCE *my, int64_t *params) {
 }
 
 int64_t libmod_ray_get_camera_pitch(INSTANCE *my, int64_t *params) {
-    if (!g_engine.initialized) return 0;
+   if (!g_engine.initialized) return 0;
     return *(int64_t*)&g_engine.camera.pitch;
 }
+
 
 /* ============================================================================
    CÁMARA - SETTER
@@ -229,6 +239,50 @@ int64_t libmod_ray_set_camera(INSTANCE *my, int64_t *params) {
 }
 
 /* ============================================================================
+   COLISIONES
+   ============================================================================ */
+
+/* Verificar si una posición colisiona con una pared */
+static int ray_check_collision(float x, float y, float radius) {
+    if (!g_engine.raycaster.grids || !g_engine.raycaster.grids[0]) {
+        return 0;
+    }
+    
+    int *grid = g_engine.raycaster.grids[0];
+    int gridWidth = g_engine.raycaster.gridWidth;
+    int gridHeight = g_engine.raycaster.gridHeight;
+    
+    /* Verificar los 4 puntos cardinales alrededor del jugador */
+    float checkPoints[4][2] = {
+        {x + radius, y}, {x - radius, y}, {x, y + radius}, {x, y - radius}
+    };
+    
+    for (int i = 0; i < 4; i++) {
+        int gridX = (int)(checkPoints[i][0] / RAY_TILE_SIZE);
+        int gridY = (int)(checkPoints[i][1] / RAY_TILE_SIZE);
+        
+        if (gridX < 0 || gridX >= gridWidth || gridY < 0 || gridY >= gridHeight) {
+            return 1; /* Fuera del mapa */
+        }
+        
+        int cellValue = grid[gridX + gridY * gridWidth];
+        if (cellValue > 0) {
+            /* Si es puerta, verificar si está abierta */
+            if (ray_is_door(cellValue)) {
+                int doorOffset = gridX + gridY * gridWidth;
+                if (g_engine.doors && doorOffset >= 0 && doorOffset < gridWidth * gridHeight) {
+                    RAY_Door *door = &g_engine.doors[doorOffset];
+                    if (door->offset < 0.9f) return 1; /* Puerta cerrada */
+                }
+            } else {
+                return 1; /* Pared normal */
+            }
+        }
+    }
+    return 0;
+}
+
+/* ============================================================================
    MOVIMIENTO
    ============================================================================*/
 /* Movement functions */
@@ -248,8 +302,11 @@ int64_t libmod_ray_move_forward(INSTANCE *my, int64_t *params) {
     if (newY >= mapHeight) newY = mapHeight - 1;
     
     /* TODO: Implementar detección de colisiones */
-    g_engine.camera.x = newX;
-    g_engine.camera.y = newY;
+    /* Verificar colisión antes de mover */
+    if (!ray_check_collision(newX, newY, 20.0f)) {
+        g_engine.camera.x = newX;
+        g_engine.camera.y = newY;
+    }
     
     return 1;
 }
@@ -270,8 +327,11 @@ int64_t libmod_ray_move_backward(INSTANCE *my, int64_t *params) {
     if (newY >= mapHeight) newY = mapHeight - 1;
     
     /* TODO: Implementar detección de colisiones */
-    g_engine.camera.x = newX;
-    g_engine.camera.y = newY;
+    /* Verificar colisión antes de mover */
+    if (!ray_check_collision(newX, newY, 20.0f)) {
+        g_engine.camera.x = newX;
+        g_engine.camera.y = newY;
+    }
     
     return 1;
 }
@@ -292,8 +352,11 @@ int64_t libmod_ray_strafe_left(INSTANCE *my, int64_t *params) {
     if (newY >= mapHeight) newY = mapHeight - 1;
     
     /* TODO: Implementar detección de colisiones */
-    g_engine.camera.x = newX;
-    g_engine.camera.y = newY;
+    /* Verificar colisión antes de mover */
+    if (!ray_check_collision(newX, newY, 20.0f)) {
+        g_engine.camera.x = newX;
+        g_engine.camera.y = newY;
+    }
     
     return 1;
 }
@@ -314,8 +377,11 @@ int64_t libmod_ray_strafe_right(INSTANCE *my, int64_t *params) {
     if (newY >= mapHeight) newY = mapHeight - 1;
     
     /* TODO: Implementar detección de colisiones */
-    g_engine.camera.x = newX;
-    g_engine.camera.y = newY;
+    /* Verificar colisión antes de mover */
+    if (!ray_check_collision(newX, newY, 20.0f)) {
+        g_engine.camera.x = newX;
+        g_engine.camera.y = newY;
+    }
     
     return 1;
 }
@@ -537,7 +603,7 @@ int64_t libmod_ray_toggle_door(INSTANCE *my, int64_t *params) {
             
             int wallType = grid[wallX + wallY * g_engine.raycaster.gridWidth];
             
-            if (ray_is_door(wallType) && !ray_is_horizontal_door(wallType)) {
+            if (ray_is_door(wallType)) {
                 float dx = playerX - vx;
                 float dy = playerY - vy;
                 float dist = sqrtf(dx * dx + dy * dy);
@@ -576,7 +642,7 @@ int64_t libmod_ray_toggle_door(INSTANCE *my, int64_t *params) {
             
             int wallType = grid[wallX + wallY * g_engine.raycaster.gridWidth];
             
-            if (ray_is_door(wallType) && !ray_is_vertical_door(wallType)) {
+            if (ray_is_door(wallType)) {
                 float dx = playerX - hx;
                 float dy = playerY - hy;
                 float dist = sqrtf(dx * dx + dy * dy);
@@ -677,9 +743,8 @@ int64_t libmod_ray_render(INSTANCE *my, int64_t *params) {
         return 0;
     }
     
-    /* Crear o reutilizar graph de renderizado */
-    static GRAPH *render_graph = NULL;
     
+    /* Crear graph la primera vez si no existe */
     if (!render_graph) {
         /* Crear graph la primera vez usando bitmap_new_syslib */
         printf("RAY: Creating render graph %dx%d\n", g_engine.displayWidth, g_engine.displayHeight);

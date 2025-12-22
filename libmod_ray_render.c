@@ -428,6 +428,9 @@ void ray_render_frame(GRAPH *dest)
     /* Actualizar física y animaciones (asumiendo ~60 FPS) */
     ray_update_physics(1.0f / 60.0f);
     
+    /* Limpiar buffer con color de cielo (como en OLD) */
+    uint32_t sky_color = 0x87CEEB; /* Sky blue: RGB(135, 206, 235) */
+    gr_clear_as(dest, sky_color);
     
     /* Renderizar cielo - skybox o color sólido */
     if (g_engine.skyTextureID > 0) {

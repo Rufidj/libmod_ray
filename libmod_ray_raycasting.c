@@ -193,8 +193,8 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
         }
         
         /* Recorrer líneas verticales */
-        while (vx >= 0 && vx < rc->gridWidth * rc->tileSize &&
-               vy >= 0 && vy < rc->gridHeight * rc->tileSize)
+        /* NOTA: No verificamos límites en el while para permitir detectar muros en los bordes */
+        for (int step = 0; step < 100; step++) /* Máximo 100 pasos para evitar loops infinitos */
         {
             int wallY = (int)floorf(vy / rc->tileSize);
             int wallX = (int)floorf(vx / rc->tileSize);
@@ -208,8 +208,8 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
             int wallOffset = wallX + wallY * rc->gridWidth;
             
             
-            /* Check if current cell is a wall (exclude horizontal doors in vertical raycast) */
-            if (grid[wallOffset] > 0 && !ray_is_horizontal_door(grid[wallOffset])) {
+            /* Check if current cell is a wall (treat doors like normal walls) */
+            if (grid[wallOffset] > 0) {
                 
                 float distX = playerX - vx;
                 float distY = playerY - vy;
@@ -275,8 +275,8 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
         }
         
         /* Recorrer líneas horizontales */
-        while (hx >= 0 && hx < rc->gridWidth * rc->tileSize &&
-               hy >= 0 && hy < rc->gridHeight * rc->tileSize)
+        /* NOTA: No verificamos límites en el while para permitir detectar muros en los bordes */
+        for (int step = 0; step < 100; step++) /* Máximo 100 pasos para evitar loops infinitos */
         {
             int wallY = (int)floorf(hy / rc->tileSize);
             int wallX = (int)floorf(hx / rc->tileSize);
@@ -290,8 +290,8 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
             int wallOffset = wallX + wallY * rc->gridWidth;
             
             
-            /* Check if current cell is a wall (exclude vertical doors in horizontal raycast) */
-            if (grid[wallOffset] > 0 && !ray_is_vertical_door(grid[wallOffset])) {
+            /* Check if current cell is a wall (treat doors like normal walls) */
+            if (grid[wallOffset] > 0) {
                 
                 float distX = playerX - hx;
                 float distY = playerY - hy;
