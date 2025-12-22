@@ -109,6 +109,18 @@ typedef struct {
 } RAY_Door;
 
 /* ============================================================================
+   SPAWN FLAGS - Posiciones de spawn para sprites
+   ============================================================================ */
+
+typedef struct {
+    int flag_id;          /* ID único de la flag (1, 2, 3...) */
+    float x, y, z;        /* Posición de spawn en el mundo */
+    int level;            /* Nivel del grid */
+    int occupied;         /* 1 si ya hay un sprite en esta flag */
+    INSTANCE *process_ptr; /* Puntero al proceso vinculado (NULL = libre) */
+} RAY_SpawnFlag;
+
+/* ============================================================================
    SPRITES
    ============================================================================ */
 
@@ -122,7 +134,9 @@ typedef struct {
     int moveSpeed;
     float rotSpeed;
     float distance;                  /* Distancia al jugador (para z-buffer) */
-    int textureID;                   /* ID de textura en el FPG */
+    int textureID;                   /* ID de textura en el FPG (para sprites estáticos) */
+    INSTANCE *process_ptr;           /* Puntero al proceso BennuGD vinculado (NULL = usar textureID) */
+    int flag_id;                     /* ID de la flag de spawn asociada (-1 = sprite manual) */
     int cleanup;                     /* 1 si debe eliminarse */
     int frameRate;
     int frame;
@@ -239,6 +253,11 @@ typedef struct {
     /* Puertas */
     RAY_Door *doors;                 /* Estado de puertas [x + y * width] */
     
+    /* Spawn Flags */
+    RAY_SpawnFlag *spawn_flags;      /* Array de spawn flags */
+    int num_spawn_flags;
+    int spawn_flags_capacity;
+    
     /* FPG de texturas */
     int fpg_id;
     
@@ -306,6 +325,13 @@ extern int64_t libmod_ray_toggle_door(INSTANCE *my, int64_t *params);
 /* Sprites dinámicos */
 extern int64_t libmod_ray_add_sprite(INSTANCE *my, int64_t *params);
 extern int64_t libmod_ray_remove_sprite(INSTANCE *my, int64_t *params);
+
+/* Spawn Flags */
+extern int64_t libmod_ray_set_flag(INSTANCE *my, int64_t *params);
+extern int64_t libmod_ray_clear_flag(INSTANCE *my, int64_t *params);
+extern int64_t libmod_ray_get_flag_x(INSTANCE *my, int64_t *params);
+extern int64_t libmod_ray_get_flag_y(INSTANCE *my, int64_t *params);
+extern int64_t libmod_ray_get_flag_z(INSTANCE *my, int64_t *params);
 
 /* ============================================================================
    FUNCIONES INTERNAS - Declaraciones

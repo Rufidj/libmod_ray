@@ -42,6 +42,11 @@ DLSYSFUNCS __bgdexport(libmod_ray, functions_exports)[] = {
     FUNC("RAY_SET_SKY_TEXTURE", "I", TYPE_INT, libmod_ray_set_sky_texture),
     FUNC("RAY_TOGGLE_DOOR", "", TYPE_INT, libmod_ray_toggle_door),
     FUNC("RAY_ADD_SPRITE", "IFFFIII", TYPE_INT, libmod_ray_add_sprite),
+    FUNC("RAY_SET_FLAG", "I", TYPE_INT, libmod_ray_set_flag),
+    FUNC("RAY_CLEAR_FLAG", "", TYPE_INT, libmod_ray_clear_flag),
+    FUNC("RAY_GET_FLAG_X", "I", TYPE_FLOAT, libmod_ray_get_flag_x),
+    FUNC("RAY_GET_FLAG_Y", "I", TYPE_FLOAT, libmod_ray_get_flag_y),
+    FUNC("RAY_GET_FLAG_Z", "I", TYPE_FLOAT, libmod_ray_get_flag_z),
     FUNC(NULL, NULL, 0, NULL)
 };
 

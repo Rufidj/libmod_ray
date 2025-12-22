@@ -16,14 +16,15 @@ extern RAY_Engine g_engine;
 
 typedef struct {
     char magic[8];           /* "RAYMAP\x1a" */
-    uint32_t version;        /* 1 or 2 */
+    uint32_t version;        /* 1, 2, or 3 */
     uint32_t map_width;
     uint32_t map_height;
     uint32_t num_levels;     /* Typically 3 */
     uint32_t num_sprites;
     uint32_t num_thin_walls;
     uint32_t num_thick_walls;
-    /* Version 2 adds camera fields: */
+    uint32_t num_spawn_flags; /* Version 3+ */
+    /* Version 2+ adds camera fields: */
     float camera_x;
     float camera_y;
     float camera_z;
@@ -61,6 +62,17 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
         return 0;
     }
     
+    /* Leer num_spawn_flags si es versión 3+ */
+    if (header.version >= 3) {
+        if (fread(&header.num_spawn_flags, sizeof(uint32_t), 1, f) != 1) {
+            fprintf(stderr, "RAY: Error leyendo num_spawn_flags\n");
+            fclose(f);
+            return 0;
+        }
+    } else {
+        header.num_spawn_flags = 0;
+    }
+    
     /* Verificar magic */
     if (memcmp(header.magic, "RAYMAP\x1a", 7) != 0) {
         fprintf(stderr, "RAY: Archivo no es un mapa válido\n");
@@ -69,7 +81,7 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
     }
     
     /* Verificar versión */
-    if (header.version != 1 && header.version != 2) {
+    if (header.version < 1 || header.version > 3) {
         fprintf(stderr, "RAY: Versión de mapa no soportada: %u\n", header.version);
         fclose(f);
         return 0;
@@ -85,9 +97,10 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
     printf("  - num_sprites: %u\n", header.num_sprites);
     printf("  - num_thin_walls: %u\n", header.num_thin_walls);
     printf("  - num_thick_walls: %u\n", header.num_thick_walls);
+    printf("  - num_spawn_flags: %u\n", header.num_spawn_flags);
     
-    /* Leer campos de cámara si es versión 2 */
-    if (header.version == 2) {
+    /* Leer campos de cámara si es versión 2+ */
+    if (header.version >= 2) {
         if (fread(&header.camera_x, sizeof(float), 1, f) != 1 ||
             fread(&header.camera_y, sizeof(float), 1, f) != 1 ||
             fread(&header.camera_z, sizeof(float), 1, f) != 1 ||
@@ -423,11 +436,52 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
         g_engine.doors[i].anim_speed = 2.0f; /* Velocidad de animación */
     }
     
+    /* Leer spawn flags si es versión 3+ */
+    if (header.version >= 3 && header.num_spawn_flags > 0) {
+        printf("RAY: Leyendo %d spawn flags...\n", header.num_spawn_flags);
+        
+        for (uint32_t i = 0; i < header.num_spawn_flags; i++) {
+            int flag_id;
+            float x, y, z;
+            int level;
+            
+            if (fread(&flag_id, sizeof(int), 1, f) != 1 ||
+                fread(&x, sizeof(float), 1, f) != 1 ||
+                fread(&y, sizeof(float), 1, f) != 1 ||
+                fread(&z, sizeof(float), 1, f) != 1 ||
+                fread(&level, sizeof(int), 1, f) != 1) {
+                fprintf(stderr, "RAY: Error leyendo spawn flag %d\n", i);
+                break;
+            }
+            
+            /* Crear spawn flag en el motor */
+            if (g_engine.num_spawn_flags < g_engine.spawn_flags_capacity) {
+                RAY_SpawnFlag *flag = &g_engine.spawn_flags[g_engine.num_spawn_flags];
+                flag->flag_id = flag_id;
+                flag->x = x;
+                flag->y = y;
+                flag->z = z;
+                flag->level = level;
+                flag->occupied = 0;
+                flag->process_ptr = NULL;
+                g_engine.num_spawn_flags++;
+                
+                printf("RAY: Spawn flag %d cargada en (%.1f, %.1f, %.1f) nivel %d\n",
+                       flag_id, x, y, z, level);
+            } else {
+                fprintf(stderr, "RAY: Capacidad de spawn flags excedida\n");
+            }
+        }
+        
+        printf("RAY: %d spawn flags cargadas\n", g_engine.num_spawn_flags);
+    }
+    
     fclose(f);
     
     printf("RAY: Mapa cargado exitosamente\n");
     printf("  - Sprites: %d\n", g_engine.num_sprites);
     printf("  - ThickWalls: %d\n", g_engine.num_thick_walls);
+    printf("  - Spawn Flags: %d\n", g_engine.num_spawn_flags);
     
     return 1;
 }

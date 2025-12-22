@@ -105,8 +105,15 @@ static void ray_draw_wall_strip(GRAPH *dest, RAY_RayHit *rayHit,
     if (texture_x >= RAY_TEXTURE_SIZE) texture_x = RAY_TEXTURE_SIZE - 1;
     
     /* Renderizar columna de pared */
+    /* Calcular límite superior para no sobrescribir el techo */
+    int ceiling_end_y = (g_engine.displayHeight - wall_screen_height) / 2 + (int)player_screen_z;
+    
     for (int y = 0; y < wall_screen_height; y++) {
         int dst_y = screen_y + y;
+        
+        /* No dibujar donde está el techo */
+        if (dst_y < ceiling_end_y) continue;
+        
         if (dst_y < 0 || dst_y >= g_engine.displayHeight) continue;
         
         /* Calcular coordenada de textura Y */
@@ -230,23 +237,30 @@ static void ray_draw_floor_ceiling_strip(GRAPH *dest, RAY_RayHit *rayHit,
         return; // No ceiling data
     }
     
-    /* REVERTIDO: Volver a la versión original que funcionaba
-     * TODO: Encontrar una mejor solución para la altura del techo */
+    /* Calcular nivel de la cámara */
+    int camera_level = (int)(g_engine.camera.z / RAY_TILE_SIZE);
+    if (camera_level < 0) camera_level = 0;
+    if (camera_level > 2) camera_level = 2;
+    
+    /* Solo renderizar el techo del nivel donde está la cámara */
+    /* TODO: Implementar grids de techo separados por nivel para renderizado multinivel */
+    float ceiling_height = (camera_level + 1) * RAY_TILE_SIZE;
+    
     int ceiling_end_y = (g_engine.displayHeight - wall_screen_height) / 2;
     ceiling_end_y += (int)player_screen_z;
     
     for (int screen_y = 0; screen_y < ceiling_end_y && screen_y < g_engine.displayHeight; screen_y++) {
         if (center_plane - screen_y <= 0) continue;
         
-        /* Usando highestCeilingLevel como antes (funciona pero altura incorrecta) */
-        float ratio = (g_engine.highestCeilingLevel * RAY_TILE_SIZE - eye_height) / 
-                     (center_plane - screen_y);
+        float ratio = (ceiling_height - eye_height) / (center_plane - screen_y);
         float straight_distance = g_engine.viewDist * ratio;
         float diagonal_distance = straight_distance * cos_factor;
         
+        /* Calcular posición en el mundo */
         float x_end = g_engine.camera.x + diagonal_distance * cosf(rayHit->rayAngle);
         float y_end = g_engine.camera.y + diagonal_distance * -sinf(rayHit->rayAngle);
         
+        /* Calcular tile basándose en la posición proyectada */
         int tile_x = (int)(x_end / RAY_TILE_SIZE);
         int tile_y = (int)(y_end / RAY_TILE_SIZE);
         
@@ -255,7 +269,7 @@ static void ray_draw_floor_ceiling_strip(GRAPH *dest, RAY_RayHit *rayHit,
             continue;
         }
         
-        /* Obtener tipo de tile de techo */
+        /* Obtener tipo de tile de techo del grid actual */
         int ceiling_tile_type = g_engine.ceilingGrid[tile_x + tile_y * g_engine.raycaster.gridWidth];
         
         if (ceiling_tile_type <= 0) continue;
@@ -285,6 +299,7 @@ static void ray_draw_floor_ceiling_strip(GRAPH *dest, RAY_RayHit *rayHit,
             gr_put_pixel(dest, screen_x + sx, screen_y, pixel);
         }
     }
+
 }
 
 /* ============================================================================
@@ -327,7 +342,7 @@ static void ray_draw_sprites(GRAPH *dest, float *z_buffer)
         /* Calcular ángulo del sprite relativo a la cámara */
         float dx = sprite->x - g_engine.camera.x;
         float dy = sprite->y - g_engine.camera.y;
-        float sprite_angle = atan2f(dy, dx);
+        float sprite_angle = atan2f(-dy, dx);  // Invertir dy
         
         /* Normalizar ángulo */
         while (sprite_angle - g_engine.camera.rot > M_PI) sprite_angle -= RAY_TWO_PI;
@@ -353,7 +368,22 @@ static void ray_draw_sprites(GRAPH *dest, float *z_buffer)
         int screen_y = g_engine.displayHeight / 2 - (int)(sprite_screen_height / 2) + (int)sprite_screen_z;
         
         /* Obtener textura del sprite */
-        GRAPH *sprite_texture = bitmap_get(g_engine.fpg_id, sprite->textureID);
+        GRAPH *sprite_texture = NULL;
+        
+        /* Si el sprite está vinculado a un proceso, usar su graph dinámico */
+        if (sprite->process_ptr != NULL) {
+            /* Usar instance_graph() para obtener el graph del proceso */
+            sprite_texture = instance_graph(sprite->process_ptr);
+            
+            /* Si el proceso no tiene graph válido, usar textureID como fallback */
+            if (!sprite_texture && sprite->textureID > 0) {
+                sprite_texture = bitmap_get(g_engine.fpg_id, sprite->textureID);
+            }
+        } else {
+            /* Sprite estático - usar textureID del FPG */
+            sprite_texture = bitmap_get(g_engine.fpg_id, sprite->textureID);
+        }
+        
         if (!sprite_texture) continue;
         
         /* Renderizar sprite */

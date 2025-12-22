@@ -85,6 +85,11 @@ int64_t libmod_ray_init(INSTANCE *my, int64_t *params) {
     g_engine.thick_walls_capacity = RAY_MAX_THICK_WALLS;
     g_engine.thickWalls = (RAY_ThickWall**)calloc(g_engine.thick_walls_capacity, sizeof(RAY_ThickWall*));
     
+    /* Inicializar spawn flags */
+    g_engine.spawn_flags_capacity = 100; /* Máximo 100 flags por mapa */
+    g_engine.spawn_flags = (RAY_SpawnFlag*)calloc(g_engine.spawn_flags_capacity, sizeof(RAY_SpawnFlag));
+    g_engine.num_spawn_flags = 0;
+    
     /* Opciones de renderizado por defecto */
     g_engine.drawMiniMap = 1;
     g_engine.drawTexturedFloor = 1;
@@ -168,6 +173,13 @@ int64_t libmod_ray_shutdown(INSTANCE *my, int64_t *params) {
         free(g_engine.doors);
         g_engine.doors = NULL;
     }
+    
+    /* Liberar spawn flags */
+    if (g_engine.spawn_flags) {
+        free(g_engine.spawn_flags);
+        g_engine.spawn_flags = NULL;
+    }
+    g_engine.num_spawn_flags = 0;
     
     /* Liberar render graph */
     if (render_graph) {
@@ -728,6 +740,151 @@ int64_t libmod_ray_remove_sprite(INSTANCE *my, int64_t *params) {
     g_engine.sprites[index].cleanup = 1;
     
     return 1;
+}
+
+/* ============================================================================
+   SPAWN FLAGS - Sistema de banderas de spawn
+   ============================================================================ */
+
+int64_t libmod_ray_set_flag(INSTANCE *my, int64_t *params) {
+    if (!g_engine.initialized) return 0;
+    if (!my) return 0;
+    
+    int flag_id = (int)params[0];
+    
+    /* Buscar la flag por ID */
+    RAY_SpawnFlag *flag = NULL;
+    for (int i = 0; i < g_engine.num_spawn_flags; i++) {
+        if (g_engine.spawn_flags[i].flag_id == flag_id) {
+            flag = &g_engine.spawn_flags[i];
+            break;
+        }
+    }
+    
+    if (!flag) {
+        fprintf(stderr, "RAY: Flag %d no encontrada en el mapa\n", flag_id);
+        return 0;
+    }
+    
+    /* Verificar si la flag ya está ocupada */
+    if (flag->occupied) {
+        fprintf(stderr, "RAY: Flag %d ya está ocupada por otro proceso\n", flag_id);
+        return 0;
+    }
+    
+    /* Buscar o crear sprite para este proceso */
+    RAY_Sprite *sprite = NULL;
+    
+    /* Primero buscar si ya existe un sprite para este proceso */
+    for (int i = 0; i < g_engine.num_sprites; i++) {
+        if (g_engine.sprites[i].process_ptr == my) {
+            sprite = &g_engine.sprites[i];
+            break;
+        }
+    }
+    
+    /* Si no existe, crear uno nuevo */
+    if (!sprite) {
+        if (g_engine.num_sprites >= g_engine.sprites_capacity) {
+            fprintf(stderr, "RAY: Máximo de sprites alcanzado\n");
+            return 0;
+        }
+        sprite = &g_engine.sprites[g_engine.num_sprites++];
+        memset(sprite, 0, sizeof(RAY_Sprite));
+    }
+    
+    /* Configurar sprite con datos de la flag */
+    sprite->x = flag->x;
+    sprite->y = flag->y;
+    sprite->z = flag->z;
+    sprite->level = flag->level;
+    sprite->process_ptr = my;  /* Vincular al proceso */
+    sprite->flag_id = flag_id;
+    sprite->w = 128;  /* Tamaño por defecto */
+    sprite->h = 128;
+    sprite->textureID = 0;  /* Se usará el graph del proceso */
+    sprite->hidden = 0;
+    sprite->cleanup = 0;
+    
+    /* Marcar flag como ocupada */
+    flag->occupied = 1;
+    flag->process_ptr = my;
+    
+    printf("RAY: Proceso %p vinculado a flag %d en posición (%.1f, %.1f, %.1f)\n",
+           (void*)my, flag_id, flag->x, flag->y, flag->z);
+    
+    return 1;
+}
+
+int64_t libmod_ray_clear_flag(INSTANCE *my, int64_t *params) {
+    if (!g_engine.initialized) return 0;
+    if (!my) return 0;
+    
+    /* Buscar el sprite de este proceso */
+    for (int i = 0; i < g_engine.num_sprites; i++) {
+        if (g_engine.sprites[i].process_ptr == my) {
+            int flag_id = g_engine.sprites[i].flag_id;
+            
+            /* Liberar la flag */
+            for (int j = 0; j < g_engine.num_spawn_flags; j++) {
+                if (g_engine.spawn_flags[j].flag_id == flag_id) {
+                    g_engine.spawn_flags[j].occupied = 0;
+                    g_engine.spawn_flags[j].process_ptr = NULL;
+                    break;
+                }
+            }
+            
+            /* Marcar sprite para eliminación */
+            g_engine.sprites[i].cleanup = 1;
+            
+            printf("RAY: Proceso %p desvinculado de flag %d\n", (void*)my, flag_id);
+            return 1;
+        }
+    }
+    
+    return 0;
+}
+
+int64_t libmod_ray_get_flag_x(INSTANCE *my, int64_t *params) {
+    if (!g_engine.initialized) return 0;
+    
+    int flag_id = (int)params[0];
+    
+    for (int i = 0; i < g_engine.num_spawn_flags; i++) {
+        if (g_engine.spawn_flags[i].flag_id == flag_id) {
+            return *(int64_t*)&g_engine.spawn_flags[i].x;
+        }
+    }
+    
+    return 0;
+}
+
+int64_t libmod_ray_get_flag_y(INSTANCE *my, int64_t *params) {
+    if (!g_engine.initialized) return 0;
+    
+    int flag_id = (int)params[0];
+    
+    for (int i = 0; i < g_engine.num_spawn_flags; i++) {
+        if (g_engine.spawn_flags[i].flag_id == flag_id) {
+            return *(int64_t*)&g_engine.spawn_flags[i].y;
+        }
+    }
+    
+    return 0;
+}
+
+int64_t libmod_ray_get_flag_z(INSTANCE *my, int64_t *params) {
+    if (!g_engine.initialized) return 0;
+    
+    int flag_id = (int)params[0];
+    
+    for (int i = 0; i < g_engine.num_spawn_flags; i++) {
+        if (g_engine.spawn_flags[i].flag_id == flag_id) {
+            return *(int64_t*)&g_engine.spawn_flags[i].z;
+        }
+    }
+    
+    return 0;
 }
 
 /* ============================================================================
