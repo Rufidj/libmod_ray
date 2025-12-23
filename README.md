@@ -2,6 +2,14 @@
 
 Módulo de raycasting 3D para BennuGD2 con soporte para múltiples niveles, sprites billboard, fog y minimapa.
 
+## 📸 Capturas de Pantalla
+
+![Captura 1](screenshots/captura1.png)
+
+![Captura 2](screenshots/captura2.png)
+
+![Captura 3](screenshots/captura3.png)
+
 ## Características
 
 - **Renderizado 3D**: Motor de raycasting optimizado
@@ -254,6 +262,23 @@ end
 - El fog se aplica a paredes, suelo, techo y sprites
 - El minimapa muestra todo el mapa estáticamente, con la cámara moviéndose
 - Los colores en `gr_put_pixel` están limitados: blanco (0xFFFFFFFF) y cyan (0xFF00FFFF) funcionan correctamente
+
+## Créditos
+
+Este módulo está basado en [SDL2 Raycasting Engine](https://github.com/andrew-lim/sdl2-raycast) por **Andrew Lim**, adaptado y extendido para BennuGD2.
+
+### Características añadidas sobre el original:
+- Integración completa con BennuGD2
+- Sistema de múltiples niveles (3 niveles independientes)
+- Sistema de puertas animadas mejorado
+- Sistema billboard con múltiples direcciones
+- Fog configurable
+- Minimapa en tiempo real
+- Sistema de spawn flags
+- Editor de mapas Qt incluido
+- Formato de mapa `.raymap` personalizado
+
+Agradecimientos especiales a Andrew Lim por el excelente motor de raycasting base.
 
 ## Editor de Mapas
 
