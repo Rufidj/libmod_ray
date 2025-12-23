@@ -1,0 +1,211 @@
+name: Build Raymap Editor
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'tools/raymap_editor/**'
+      - '.github/workflows/build-raymap-editor.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'tools/raymap_editor/**'
+      - '.github/workflows/build-raymap-editor.yml'
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Build for Linux
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Qt and dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          qt6-base-dev \
+          qt6-tools-dev \
+          qt6-tools-dev-tools \
+          libgl1-mesa-dev \
+          libglu1-mesa-dev \
+          zlib1g-dev \
+          cmake \
+          build-essential
+    
+    - name: Clean build directory
+      working-directory: tools/raymap_editor
+      run: rm -rf build
+    
+    - name: Configure CMake
+      working-directory: tools/raymap_editor
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=/usr
+    
+    - name: Build
+      working-directory: tools/raymap_editor
+      run: cmake --build build --config Release -j$(nproc)
+    
+    - name: Package
+      working-directory: tools/raymap_editor
+      run: |
+        mkdir -p raymap_editor-linux
+        cp build/raymap_editor raymap_editor-linux/
+        cp README.md raymap_editor-linux/ || true
+        cp USAGE.md raymap_editor-linux/ || true
+        tar -czf raymap_editor-linux-x64.tar.gz raymap_editor-linux/
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: raymap_editor-linux-x64
+        path: tools/raymap_editor/raymap_editor-linux-x64.tar.gz
+        retention-days: 30
+
+  build-windows:
+    name: Build for Windows
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: '6.6.*'
+        host: 'windows'
+        target: 'desktop'
+        arch: 'win64_msvc2019_64'
+        cache: true
+    
+    - name: Setup MSVC
+      uses: microsoft/setup-msbuild@v2
+    
+    - name: Clean build directory
+      working-directory: tools/raymap_editor
+      run: |
+        if (Test-Path build) { Remove-Item -Recurse -Force build }
+    
+    - name: Configure CMake
+      working-directory: tools/raymap_editor
+      run: |
+        cmake -B build `
+          -DCMAKE_BUILD_TYPE=Release `
+          -DCMAKE_PREFIX_PATH="${env:Qt6_DIR}"
+    
+    - name: Build
+      working-directory: tools/raymap_editor
+      run: cmake --build build --config Release
+    
+    - name: Deploy Qt dependencies
+      working-directory: tools/raymap_editor
+      run: |
+        mkdir raymap_editor-windows
+        Copy-Item build/Release/raymap_editor.exe raymap_editor-windows/
+        & "${env:Qt6_DIR}/bin/windeployqt.exe" raymap_editor-windows/raymap_editor.exe
+        Copy-Item README.md raymap_editor-windows/ -ErrorAction SilentlyContinue
+        Copy-Item USAGE.md raymap_editor-windows/ -ErrorAction SilentlyContinue
+    
+    - name: Create ZIP
+      working-directory: tools/raymap_editor
+      run: Compress-Archive -Path raymap_editor-windows -DestinationPath raymap_editor-windows-x64.zip
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: raymap_editor-windows-x64
+        path: tools/raymap_editor/raymap_editor-windows-x64.zip
+        retention-days: 30
+
+  build-macos:
+    name: Build for macOS
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install Qt and dependencies
+      run: |
+        brew update
+        brew install qt@6 zlib cmake
+        echo "Qt6_DIR=$(brew --prefix qt@6)/lib/cmake/Qt6" >> $GITHUB_ENV
+    
+    - name: Clean build directory
+      working-directory: tools/raymap_editor
+      run: rm -rf build
+    
+    - name: Configure CMake
+      working-directory: tools/raymap_editor
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
+    
+    - name: Build
+      working-directory: tools/raymap_editor
+      run: cmake --build build --config Release -j$(sysctl -n hw.ncpu)
+    
+    - name: Deploy Qt dependencies
+      working-directory: tools/raymap_editor
+      run: |
+        $(brew --prefix qt@6)/bin/macdeployqt build/raymap_editor.app -dmg
+    
+    - name: Package
+      working-directory: tools/raymap_editor
+      run: |
+        mkdir -p raymap_editor-macos
+        cp -r build/raymap_editor.app raymap_editor-macos/
+        cp README.md raymap_editor-macos/ || true
+        cp USAGE.md raymap_editor-macos/ || true
+        # Create DMG if macdeployqt didn't create it
+        if [ -f build/raymap_editor.dmg ]; then
+          cp build/raymap_editor.dmg raymap_editor-macos-x64.dmg
+        else
+          tar -czf raymap_editor-macos-x64.tar.gz raymap_editor-macos/
+        fi
+    
+    - name: Upload artifact (DMG)
+      if: hashFiles('tools/raymap_editor/raymap_editor-macos-x64.dmg') != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: raymap_editor-macos-x64-dmg
+        path: tools/raymap_editor/raymap_editor-macos-x64.dmg
+        retention-days: 30
+    
+    - name: Upload artifact (tar.gz)
+      if: hashFiles('tools/raymap_editor/raymap_editor-macos-x64.tar.gz') != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: raymap_editor-macos-x64
+        path: tools/raymap_editor/raymap_editor-macos-x64.tar.gz
+        retention-days: 30
+
+  create-release:
+    name: Create Release
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: raymap-editor-v${{ github.run_number }}
+        name: Raymap Editor Build ${{ github.run_number }}
+        draft: false
+        prerelease: false
+        files: |
+          artifacts/**/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
