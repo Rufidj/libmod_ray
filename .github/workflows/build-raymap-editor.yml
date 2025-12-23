@@ -26,9 +26,9 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          qt6-base-dev \
-          qt6-tools-dev \
-          qt6-tools-dev-tools \
+          qtbase5-dev \
+          qttools5-dev \
+          qttools5-dev-tools \
           libgl1-mesa-dev \
           libglu1-mesa-dev \
           zlib1g-dev \
@@ -50,44 +50,54 @@ jobs:
       working-directory: tools/raymap_editor
       run: cmake --build build --config Release -j$(nproc)
     
-    - name: Install to AppDir
+    - name: Package with dependencies
       working-directory: tools/raymap_editor
       run: |
-        DESTDIR=AppDir cmake --install build
-        mkdir -p AppDir/usr/bin
-        cp build/raymap_editor AppDir/usr/bin/
-    
-    - name: Bundle Qt dependencies
-      working-directory: tools/raymap_editor
-      run: |
-        # Download linuxdeployqt
-        wget -q https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage
-        chmod +x linuxdeployqt-continuous-x86_64.AppImage
-        # Extract it
-        ./linuxdeployqt-continuous-x86_64.AppImage --appimage-extract
-        # Bundle Qt libraries
-        ./squashfs-root/AppRun AppDir/usr/bin/raymap_editor -bundle-non-qt-libs || true
-        # Copy Qt plugins manually
-        mkdir -p AppDir/usr/plugins
-        cp -r /usr/lib/x86_64-linux-gnu/qt6/plugins/platforms AppDir/usr/plugins/ || true
-        cp -r $(qmake6 -query QT_INSTALL_PLUGINS)/platforms AppDir/usr/plugins/ || true
-    
-    - name: Package
-      working-directory: tools/raymap_editor
-      run: |
-        mkdir -p raymap_editor-linux
-        cp -r AppDir/usr/* raymap_editor-linux/
+        mkdir -p raymap_editor-linux/bin
+        mkdir -p raymap_editor-linux/lib
+        mkdir -p raymap_editor-linux/plugins/platforms
+        
+        # Copy executable
+        cp build/raymap_editor raymap_editor-linux/bin/
+        
+        # Copy Qt5 libraries
+        cp -L /usr/lib/x86_64-linux-gnu/libQt5Widgets.so.5 raymap_editor-linux/lib/ || true
+        cp -L /usr/lib/x86_64-linux-gnu/libQt5Gui.so.5 raymap_editor-linux/lib/ || true
+        cp -L /usr/lib/x86_64-linux-gnu/libQt5Core.so.5 raymap_editor-linux/lib/ || true
+        cp -L /usr/lib/x86_64-linux-gnu/libQt5DBus.so.5 raymap_editor-linux/lib/ || true
+        
+        # Copy Qt5 plugins
+        cp -L /usr/lib/x86_64-linux-gnu/qt5/plugins/platforms/libqxcb.so raymap_editor-linux/plugins/platforms/ || true
+        cp -L /usr/lib/x86_64-linux-gnu/qt5/plugins/platforms/libqwayland*.so raymap_editor-linux/plugins/platforms/ || true
+        
+        # Copy other dependencies
+        cp -L /usr/lib/x86_64-linux-gnu/libicui18n.so.* raymap_editor-linux/lib/ || true
+        cp -L /usr/lib/x86_64-linux-gnu/libicuuc.so.* raymap_editor-linux/lib/ || true
+        cp -L /usr/lib/x86_64-linux-gnu/libicudata.so.* raymap_editor-linux/lib/ || true
+        cp -L /usr/lib/x86_64-linux-gnu/libdouble-conversion.so.* raymap_editor-linux/lib/ || true
+        cp -L /usr/lib/x86_64-linux-gnu/libpcre2-16.so.* raymap_editor-linux/lib/ || true
+        cp -L /usr/lib/x86_64-linux-gnu/libz.so.* raymap_editor-linux/lib/ || true
+        
+        # Copy XCB libraries
+        cp -L /usr/lib/x86_64-linux-gnu/libxcb*.so.* raymap_editor-linux/lib/ || true
+        cp -L /usr/lib/x86_64-linux-gnu/libX*.so.* raymap_editor-linux/lib/ || true
+        
+        # Copy documentation
         cp README.md raymap_editor-linux/ || true
         cp USAGE.md raymap_editor-linux/ || true
-        # Create a launch script
+        
+        # Create launch script
         cat > raymap_editor-linux/raymap_editor.sh << 'EOF'
         #!/bin/bash
         DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         export LD_LIBRARY_PATH="$DIR/lib:$LD_LIBRARY_PATH"
         export QT_PLUGIN_PATH="$DIR/plugins"
+        export QT_QPA_PLATFORM_PLUGIN_PATH="$DIR/plugins/platforms"
         "$DIR/bin/raymap_editor" "$@"
         EOF
         chmod +x raymap_editor-linux/raymap_editor.sh
+        
+        # Create tar.gz
         tar -czf raymap_editor-linux-x64.tar.gz raymap_editor-linux/
     
     - name: Upload artifact
@@ -108,7 +118,7 @@ jobs:
     - name: Install Qt
       uses: jurplel/install-qt-action@v3
       with:
-        version: '6.6.*'
+        version: '5.15.2'
         host: 'windows'
         target: 'desktop'
         arch: 'win64_msvc2019_64'
@@ -134,7 +144,7 @@ jobs:
       run: |
         cmake -B build `
           -DCMAKE_BUILD_TYPE=Release `
-          -DCMAKE_PREFIX_PATH="${env:Qt6_DIR}" `
+          -DCMAKE_PREFIX_PATH="${env:Qt5_DIR}" `
           -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake"
     
     - name: Build
@@ -146,18 +156,47 @@ jobs:
       run: |
         mkdir raymap_editor-windows
         Copy-Item build/Release/raymap_editor.exe raymap_editor-windows/
-        # Deploy Qt dependencies with all necessary plugins
-        & "${env:Qt6_DIR}/bin/windeployqt.exe" `
+        
+        # Deploy Qt dependencies with ALL plugins
+        & "${env:Qt5_DIR}/bin/windeployqt.exe" `
           --release `
+          --force `
           --no-compiler-runtime `
           --no-system-d3d-compiler `
           --no-opengl-sw `
+          --no-translations `
           raymap_editor-windows/raymap_editor.exe
+        
+        # Ensure all necessary plugins are present
+        # Styles plugins (important for UI appearance)
+        New-Item -ItemType Directory -Force -Path raymap_editor-windows/styles
+        Copy-Item "${env:Qt5_DIR}/plugins/styles/*.dll" raymap_editor-windows/styles/ -ErrorAction SilentlyContinue
+        
+        # Image formats plugins
+        New-Item -ItemType Directory -Force -Path raymap_editor-windows/imageformats
+        Copy-Item "${env:Qt5_DIR}/plugins/imageformats/*.dll" raymap_editor-windows/imageformats/ -ErrorAction SilentlyContinue
+        
+        # Icon engines
+        New-Item -ItemType Directory -Force -Path raymap_editor-windows/iconengines
+        Copy-Item "${env:Qt5_DIR}/plugins/iconengines/*.dll" raymap_editor-windows/iconengines/ -ErrorAction SilentlyContinue
+        
+        # Platform themes
+        New-Item -ItemType Directory -Force -Path raymap_editor-windows/platformthemes
+        Copy-Item "${env:Qt5_DIR}/plugins/platformthemes/*.dll" raymap_editor-windows/platformthemes/ -ErrorAction SilentlyContinue
+        
         # Copy zlib DLL from vcpkg
         Copy-Item "C:\vcpkg\installed\x64-windows\bin\zlib1.dll" raymap_editor-windows/ -ErrorAction SilentlyContinue
+        
+        # Create qt.conf to ensure plugins are loaded correctly
+        "[Paths]`nPlugins = ." | Out-File -FilePath raymap_editor-windows/qt.conf -Encoding ASCII
+        
         # Copy documentation
         Copy-Item README.md raymap_editor-windows/ -ErrorAction SilentlyContinue
         Copy-Item USAGE.md raymap_editor-windows/ -ErrorAction SilentlyContinue
+        
+        # List all files for debugging
+        Write-Host "=== Package contents ==="
+        Get-ChildItem -Recurse raymap_editor-windows | Select-Object FullName
     
     - name: Create ZIP
       working-directory: tools/raymap_editor
@@ -181,8 +220,8 @@ jobs:
     - name: Install Qt and dependencies
       run: |
         brew update
-        brew install qt@6 zlib cmake
-        echo "Qt6_DIR=$(brew --prefix qt@6)/lib/cmake/Qt6" >> $GITHUB_ENV
+        brew install qt@5 zlib cmake
+        echo "Qt5_DIR=$(brew --prefix qt@5)" >> $GITHUB_ENV
     
     - name: Clean build directory
       working-directory: tools/raymap_editor
@@ -193,7 +232,7 @@ jobs:
       run: |
         cmake -B build \
           -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
+          -DCMAKE_PREFIX_PATH="$(brew --prefix qt@5)"
     
     - name: Build
       working-directory: tools/raymap_editor
@@ -203,7 +242,7 @@ jobs:
       working-directory: tools/raymap_editor
       run: |
         # Deploy Qt frameworks into the app bundle
-        $(brew --prefix qt@6)/bin/macdeployqt build/raymap_editor.app -verbose=2
+        $(brew --prefix qt@5)/bin/macdeployqt build/raymap_editor.app -verbose=2
         # Verify the app bundle
         otool -L build/raymap_editor.app/Contents/MacOS/raymap_editor
     
