@@ -16,7 +16,7 @@ extern RAY_Engine g_engine;
 
 typedef struct {
     char magic[8];           /* "RAYMAP\x1a" */
-    uint32_t version;        /* 1, 2, or 3 */
+    uint32_t version;        /* 1, 2, 3, or 4 */
     uint32_t map_width;
     uint32_t map_height;
     uint32_t num_levels;     /* Typically 3 */
@@ -81,7 +81,7 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
     }
     
     /* Verificar versión */
-    if (header.version < 1 || header.version > 3) {
+    if (header.version < 1 || header.version > 4) {
         fprintf(stderr, "RAY: Versión de mapa no soportada: %u\n", header.version);
         fclose(f);
         return 0;
@@ -347,24 +347,24 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
         
         size_t grid_size = header.map_width * header.map_height * sizeof(int);
         
-        /* Leer floor grids (3 niveles) - CARGAR TODOS LOS NIVELES */
-        g_engine.floorGrid = (int*)calloc(header.map_width * header.map_height, sizeof(int));
-        int *floor1 = (int*)calloc(header.map_width * header.map_height, sizeof(int));
-        int *floor2 = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        /* Leer floor grids (3 niveles) - GUARDAR TODOS EN EL ARRAY */
+        g_engine.floorGrids[0] = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        g_engine.floorGrids[1] = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        g_engine.floorGrids[2] = (int*)calloc(header.map_width * header.map_height, sizeof(int));
         
-        if (g_engine.floorGrid && floor1 && floor2) {
-            if (fread(g_engine.floorGrid, grid_size, 1, f) == 1 &&
-                fread(floor1, grid_size, 1, f) == 1 &&
-                fread(floor2, grid_size, 1, f) == 1) {
+        if (g_engine.floorGrids[0] && g_engine.floorGrids[1] && g_engine.floorGrids[2]) {
+            if (fread(g_engine.floorGrids[0], grid_size, 1, f) == 1 &&
+                fread(g_engine.floorGrids[1], grid_size, 1, f) == 1 &&
+                fread(g_engine.floorGrids[2], grid_size, 1, f) == 1) {
                 
-                /* DEBUG: Contar celdas no vacías */
+                /* DEBUG: Contar celdas no vacías en nivel 0 */
                 int floor_count = 0;
                 for (int i = 0; i < (int)(header.map_width * header.map_height); i++) {
-                    if (g_engine.floorGrid[i] != 0) floor_count++;
+                    if (g_engine.floorGrids[0][i] != 0) floor_count++;
                 }
-                printf("RAY: Floor grid - %d celdas con textura - Primeras 10: ", floor_count);
+                printf("RAY: Floor grid nivel 0 - %d celdas con textura - Primeras 10: ", floor_count);
                 for (int i = 0; i < 10; i++) {
-                    printf("%d ", g_engine.floorGrid[i]);
+                    printf("%d ", g_engine.floorGrids[0][i]);
                 }
                 printf("\n");
             } else {
@@ -372,39 +372,30 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
             }
         }
         
-        /* Por ahora liberamos floor1 y floor2 ya que el motor solo usa nivel 0 */
-        /* TODO: Implementar soporte multi-nivel para floor/ceiling */
-        if (floor1) free(floor1);
-        if (floor2) free(floor2);
+        /* Leer ceiling grids (3 niveles) - GUARDAR TODOS EN EL ARRAY */
+        g_engine.ceilingGrids[0] = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        g_engine.ceilingGrids[1] = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        g_engine.ceilingGrids[2] = (int*)calloc(header.map_width * header.map_height, sizeof(int));
         
-        /* Leer ceiling grids (3 niveles) - CARGAR TODOS LOS NIVELES */
-        g_engine.ceilingGrid = (int*)calloc(header.map_width * header.map_height, sizeof(int));
-        int *ceiling1 = (int*)calloc(header.map_width * header.map_height, sizeof(int));
-        int *ceiling2 = (int*)calloc(header.map_width * header.map_height, sizeof(int));
-        
-        if (g_engine.ceilingGrid && ceiling1 && ceiling2) {
-            if (fread(g_engine.ceilingGrid, grid_size, 1, f) == 1 &&
-                fread(ceiling1, grid_size, 1, f) == 1 &&
-                fread(ceiling2, grid_size, 1, f) == 1) {
+        if (g_engine.ceilingGrids[0] && g_engine.ceilingGrids[1] && g_engine.ceilingGrids[2]) {
+            if (fread(g_engine.ceilingGrids[0], grid_size, 1, f) == 1 &&
+                fread(g_engine.ceilingGrids[1], grid_size, 1, f) == 1 &&
+                fread(g_engine.ceilingGrids[2], grid_size, 1, f) == 1) {
                 
-                /* DEBUG: Contar celdas no vacías */
+                /* DEBUG: Contar celdas no vacías en nivel 0 */
                 int ceiling_count = 0;
                 for (int i = 0; i < (int)(header.map_width * header.map_height); i++) {
-                    if (g_engine.ceilingGrid[i] != 0) ceiling_count++;
+                    if (g_engine.ceilingGrids[0][i] != 0) ceiling_count++;
                 }
-                printf("RAY: Ceiling grid - %d celdas con textura - Primeras 10: ", ceiling_count);
+                printf("RAY: Ceiling grid nivel 0 - %d celdas con textura - Primeras 10: ", ceiling_count);
                 for (int i = 0; i < 10; i++) {
-                    printf("%d ", g_engine.ceilingGrid[i]);
+                    printf("%d ", g_engine.ceilingGrids[0][i]);
                 }
                 printf("\n");
             } else {
                 fprintf(stderr, "RAY: Error leyendo ceiling grids\n");
             }
         }
-        
-        /* Por ahora liberamos ceiling1 y ceiling2 ya que el motor solo usa nivel 0 */
-        if (ceiling1) free(ceiling1);
-        if (ceiling2) free(ceiling2);
         
         /* Saltar floor height grids si existen (3 niveles de floats) */
         /* No los usamos por ahora, pero debemos saltarlos */
@@ -416,8 +407,10 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
     } else {
         /* Si no hay datos de floor/ceiling, inicializar a ceros */
         printf("RAY: No hay floor/ceiling data, inicializando a ceros\n");
-        g_engine.floorGrid = (int*)calloc(header.map_width * header.map_height, sizeof(int));
-        g_engine.ceilingGrid = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        for (int level = 0; level < 3; level++) {
+            g_engine.floorGrids[level] = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+            g_engine.ceilingGrids[level] = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+        }
     }
     
     /* Inicializar array de puertas */
@@ -548,14 +541,16 @@ int64_t libmod_ray_free_map(INSTANCE *my, int64_t *params) {
     }
     g_engine.num_thick_walls = 0;
     
-    /* Liberar floor/ceiling grids */
-    if (g_engine.floorGrid) {
-        free(g_engine.floorGrid);
-        g_engine.floorGrid = NULL;
-    }
-    if (g_engine.ceilingGrid) {
-        free(g_engine.ceilingGrid);
-        g_engine.ceilingGrid = NULL;
+    /* Liberar floor/ceiling grids por nivel */
+    for (int level = 0; level < 3; level++) {
+        if (g_engine.floorGrids[level]) {
+            free(g_engine.floorGrids[level]);
+            g_engine.floorGrids[level] = NULL;
+        }
+        if (g_engine.ceilingGrids[level]) {
+            free(g_engine.ceilingGrids[level]);
+            g_engine.ceilingGrids[level] = NULL;
+        }
     }
     
     /* Liberar doors */

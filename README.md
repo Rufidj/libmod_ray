@@ -1,284 +1,260 @@
-# libmod_ray - Raycasting Module for BennuGD2
+# libmod_ray - Motor de Raycasting para BennuGD2
 
-A high-performance 3D raycasting engine module for BennuGD2, featuring multi-level maps, textured walls, floors, ceilings, and sprite rendering.
+Módulo de raycasting 3D para BennuGD2 con soporte para múltiples niveles, sprites billboard, fog y minimapa.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![BennuGD2](https://img.shields.io/badge/BennuGD2-compatible-green.svg)
+## Características
 
-## Features
+- **Renderizado 3D**: Motor de raycasting optimizado
+- **Múltiples Niveles**: Soporte para suelo, techo y niveles intermedios
+- **Puertas Animadas**: Sistema completo de puertas con animaciones
+- **Sistema Billboard**: Sprites que siempre miran a la cámara con múltiples direcciones
+- **Fog (Niebla)**: Sistema de fog configurable con color y distancias
+- **Minimapa**: Minimapa en tiempo real con posición de cámara y sprites
+- **Colisiones**: Sistema de colisiones con paredes
 
-- ✨ **Multi-level 3D rendering** - Support for up to 3 vertical levels
-- 🧱 **Textured walls** - Full texture mapping with perspective correction
-- 🎨 **Floor and ceiling rendering** - Perspective-correct textured surfaces
-- 👾 **Sprite system** - Billboard sprites with Z-buffering
-- 🌫️ **Fog effects** - Distance-based fog for atmosphere
-- 🚪 **Interactive doors** - Toggle-able door system
-- 🎮 **Full camera control** - Movement, rotation, pitch, and jumping
-- 📦 **Binary map format** - Efficient `.raymap` file format
-- 🛠️ **Map builder tool** - Convert text files to binary maps
+## API Completa
 
-## Quick Start
+### Inicialización
 
-### 1. Compile the Module
+```prg
+RAY_INIT(display_width, display_height, fov, strip_width)
+```
+Inicializa el motor de raycasting.
 
-```bash
-cd modules/libmod_ray
-mkdir build && cd build
-cmake ..
-make
+### Carga de Mapas
+
+```prg
+RAY_LOAD_MAP(filename, fpg_textures)
+```
+Carga un mapa `.raymap` con las texturas del FPG especificado.
+
+### Cámara
+
+```prg
+RAY_SET_CAMERA(x, y, z, rot)
+```
+Establece la posición y rotación de la cámara.
+
+```prg
+RAY_MOVE_CAMERA(forward, strafe)
+```
+Mueve la cámara relativa a su dirección actual.
+
+```prg
+RAY_ROTATE_CAMERA(angle)
+```
+Rota la cámara horizontalmente.
+
+```prg
+RAY_LOOK_UP_DOWN(amount)
+```
+Ajusta el pitch (mirar arriba/abajo).
+
+```prg
+RAY_PITCH_UP(amount)
+RAY_PITCH_DOWN(amount)
+```
+Controles de pitch individuales.
+
+```prg
+x = RAY_GET_CAMERA_X()
+y = RAY_GET_CAMERA_Y()
+```
+Obtiene la posición actual de la cámara.
+
+### Sistema Billboard
+
+```prg
+RAY_SET_BILLBOARD(enabled, num_directions)
+```
+Activa el sistema billboard. `num_directions` típicamente 4, 8 o 12.
+
+```prg
+RAY_UPDATE_SPRITE_POSITION(x, y, z)
+```
+Actualiza la posición de un sprite desde BennuGD (llamar desde el proceso del sprite).
+
+### Colisiones
+
+```prg
+collision = RAY_CHECK_COLLISION(x, y, radius)
+```
+Verifica si hay colisión con paredes en la posición (x, y) con el radio dado.
+Retorna 1 si hay colisión, 0 si no.
+
+### Puertas
+
+```prg
+RAY_TOGGLE_DOOR(x, y)
+```
+Abre/cierra la puerta en la posición especificada.
+
+### Fog (Niebla)
+
+```prg
+RAY_SET_FOG(enabled, r, g, b, start_distance, end_distance)
+```
+Configura el sistema de fog.
+- `enabled`: 1 = activado, 0 = desactivado
+- `r, g, b`: Color del fog (0-255)
+- `start_distance`: Distancia donde empieza el fog
+- `end_distance`: Distancia donde el fog es completo
+
+**Ejemplo:**
+```prg
+RAY_SET_FOG(1, 255, 255, 255, 512.0, 2048.0);  // Niebla blanca
 ```
 
-### 2. Create a Map
+### Minimapa
 
-Use the map builder tool to create maps from text files:
+```prg
+RAY_SET_MINIMAP(enabled, size, x, y, scale)
+```
+Configura el minimapa.
+- `enabled`: 1 = activado, 0 = desactivado
+- `size`: Tamaño del minimapa en pixels (cuadrado)
+- `x, y`: Posición en pantalla
+- `scale`: Escala del minimapa (menor = más zoom out)
 
-```bash
-cd tools
-./map_builder example/config.txt ../test.raymap
+**Ejemplo:**
+```prg
+RAY_SET_MINIMAP(1, 250, 590, 390, 0.2);  // Minimapa 250x250 en esquina inferior derecha
 ```
 
-### 3. Run the Test Program
+**Colores del minimapa:**
+- Blanco: Cámara/jugador
+- Cyan: Sprites y puertas
+- Rosa/Azul: Paredes
 
-```bash
-cd ..
-bgdi test_ray.dcb
+### Renderizado
+
+```prg
+RAY_RENDER()
 ```
+Renderiza un frame completo del motor.
 
-## Usage Example
+### Spawn Flags
 
-```bennugd
+```prg
+x = RAY_GET_FLAG_X(flag_id)
+y = RAY_GET_FLAG_Y(flag_id)
+z = RAY_GET_FLAG_Z(flag_id)
+```
+Obtiene las coordenadas de un spawn flag del mapa.
+
+```prg
+RAY_BIND_TO_FLAG(flag_id)
+```
+Vincula el proceso actual a un spawn flag (para sprites).
+
+## Ejemplo de Uso
+
+Ver `test_billboard.prg` para un ejemplo completo de uso del motor con:
+- Carga de mapa y texturas
+- Sistema billboard con sprites animados
+- Movimiento FPS con colisiones
+- Puertas interactivas
+- Fog y minimapa configurados
+- Audio (música y sonidos)
+
+```prg
 import "libmod_ray";
 import "libmod_gfx";
+import "libmod_sound";
+
+program raycasting_demo;
+
+global
+    fpg_textures;
+    fpg_sprites;
+end
 
 process main()
-private
-    int fpg_textures;
 begin
     set_mode(800, 600, 32);
+    set_fps(60, 0);
     
-    // Load textures
-    fpg_textures = fpg_load("textures.fpg");
+    // Cargar recursos
+    fpg_textures = load_fpg("Textures/textures.fpg");
+    fpg_sprites = load_fpg("sprites.fpg");
     
-    // Initialize raycasting engine
-    RAY_INIT(800, 600, 90, 2);
+    // Inicializar motor
+    RAY_INIT(800, 600, 60, 4);
+    RAY_LOAD_MAP("Maps/level1.raymap", fpg_textures);
     
-    // Load map
-    RAY_LOAD_MAP("test.raymap", fpg_textures);
+    // Configurar fog y minimapa
+    RAY_SET_FOG(1, 255, 255, 255, 512.0, 2048.0);
+    RAY_SET_MINIMAP(1, 200, 590, 390, 0.2);
     
-    // Set camera position
-    RAY_SET_CAMERA(512.0, 512.0, 0.0, 0.0, 0.0);
+    // Activar billboard
+    RAY_SET_BILLBOARD(1, 12);
     
-    // Main loop
+    // Crear sprites
+    enemy(1);
+    enemy(2);
+    
+    // Loop principal
     loop
-        // Handle input
-        if (key(_w)) RAY_MOVE_FORWARD(4.0); end
-        if (key(_s)) RAY_MOVE_BACKWARD(4.0); end
-        if (key(_a)) RAY_STRAFE_LEFT(4.0); end
-        if (key(_d)) RAY_STRAFE_RIGHT(4.0); end
-        if (key(_left)) RAY_ROTATE(-0.05); end
-        if (key(_right)) RAY_ROTATE(0.05); end
-        if (key(_space)) RAY_JUMP(); end
+        // Controles
+        if (key(_w)) RAY_MOVE_CAMERA(100, 0); end
+        if (key(_s)) RAY_MOVE_CAMERA(-100, 0); end
+        if (key(_a)) RAY_MOVE_CAMERA(0, -100); end
+        if (key(_d)) RAY_MOVE_CAMERA(0, 100); end
+        if (key(_left)) RAY_ROTATE_CAMERA(-50000); end
+        if (key(_right)) RAY_ROTATE_CAMERA(50000); end
+        if (key(_e)) RAY_TOGGLE_DOOR(RAY_GET_CAMERA_X(), RAY_GET_CAMERA_Y()); end
         
-        // Render frame
-        graph = RAY_RENDER();
-        put(0, graph, 400, 300);
+        // Renderizar
+        RAY_RENDER();
         
         frame;
     end
+end
+
+process enemy(flag_id)
+private
+    float x, y, z;
+    int move_timer;
+end
+begin
+    // Vincular a spawn flag
+    RAY_BIND_TO_FLAG(flag_id);
+    x = RAY_GET_FLAG_X(flag_id);
+    y = RAY_GET_FLAG_Y(flag_id);
+    z = RAY_GET_FLAG_Z(flag_id);
     
-    // Cleanup
-    RAY_FREE_MAP();
-    RAY_SHUTDOWN();
+    file = fpg_sprites;
+    graph = 1;
+    
+    loop
+        // Movimiento aleatorio
+        if (move_timer == 0)
+            float new_x = x + rand(-50, 50);
+            float new_y = y + rand(-50, 50);
+            
+            if (!RAY_CHECK_COLLISION(new_x, new_y, 32))
+                x = new_x;
+                y = new_y;
+                RAY_UPDATE_SPRITE_POSITION(x, y, z);
+            end
+            
+            move_timer = 30;
+        else
+            move_timer--;
+        end
+        
+        frame;
+    end
 end
 ```
 
-## API Reference
+## Notas Técnicas
 
-### Initialization
+- Las distancias están en unidades del mundo (128 unidades = 1 baldosa)
+- El fog se aplica a paredes, suelo, techo y sprites
+- El minimapa muestra todo el mapa estáticamente, con la cámara moviéndose
+- Los colores en `gr_put_pixel` están limitados: blanco (0xFFFFFFFF) y cyan (0xFF00FFFF) funcionan correctamente
 
-- `RAY_INIT(width, height, fov, strip_width)` - Initialize the engine
-- `RAY_SHUTDOWN()` - Shutdown and cleanup
+## Editor de Mapas
 
-### Map Management
-
-- `RAY_LOAD_MAP(filename, fpg_id)` - Load a `.raymap` file
-- `RAY_FREE_MAP()` - Free current map
-
-### Camera Control
-
-- `RAY_SET_CAMERA(x, y, z, rot, pitch)` - Set camera position
-- `RAY_GET_CAMERA_X()` - Get camera X position
-- `RAY_GET_CAMERA_Y()` - Get camera Y position
-- `RAY_GET_CAMERA_Z()` - Get camera Z position
-- `RAY_GET_CAMERA_ROT()` - Get camera rotation
-- `RAY_GET_CAMERA_PITCH()` - Get camera pitch
-
-### Movement
-
-- `RAY_MOVE_FORWARD(speed)` - Move forward
-- `RAY_MOVE_BACKWARD(speed)` - Move backward
-- `RAY_STRAFE_LEFT(speed)` - Strafe left
-- `RAY_STRAFE_RIGHT(speed)` - Strafe right
-- `RAY_ROTATE(angle)` - Rotate camera
-- `RAY_LOOK_UP_DOWN(angle)` - Look up/down
-- `RAY_JUMP()` - Jump
-
-### Rendering
-
-- `RAY_RENDER()` - Render frame, returns graph ID
-
-### Configuration
-
-- `RAY_SET_FOG(enabled)` - Enable/disable fog
-- `RAY_SET_DRAW_MINIMAP(enabled)` - Enable/disable minimap
-- `RAY_SET_DRAW_WEAPON(enabled)` - Enable/disable weapon
-
-### Interaction
-
-- `RAY_TOGGLE_DOOR(x, y)` - Toggle door at grid position
-- `RAY_ADD_SPRITE(x, y, z, tex_id, w, h)` - Add dynamic sprite
-- `RAY_REMOVE_SPRITE(id)` - Remove sprite
-
-## Map Format
-
-Maps are created from text files and compiled to binary `.raymap` format.
-
-### Configuration File (`config.txt`)
-
-```
-grid0=nivel0.txt
-grid1=nivel1.txt
-grid2=nivel2.txt
-floor=floor.txt
-ceiling=ceiling.txt
-sprites=sprites.txt
-```
-
-### Grid Files
-
-16x16 CSV grid where each number represents a texture ID:
-
-```
-1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
-1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
-1,0,0,0,0,2,2,2,2,0,0,0,0,0,0,1
-...
-```
-
-- `0` = Empty space
-- `1-999` = Wall texture ID from FPG
-- `1000-1500` = Vertical doors
-- `1501+` = Horizontal doors
-
-### Sprites File
-
-CSV format: `x, y, z, texture_id, width, height, level, rotation`
-
-```
-512.0, 512.0, 0.0, 10, 128, 128, 0, 0.0
-768.0, 384.0, 0.0, 11, 128, 128, 0, 0.0
-```
-
-## Texture Requirements
-
-Create an FPG file with 128x128 textures:
-
-- **IDs 1-4**: Wall textures
-- **ID 5**: Floor texture
-- **ID 6**: Ceiling texture
-- **IDs 10-14**: Sprite textures
-
-Use the included `crear_texturas.prg` to generate example textures.
-
-## Building Maps
-
-The `map_builder` tool converts text files to binary format:
-
-```bash
-./map_builder config.txt output.raymap
-```
-
-See `tools/README.md` for detailed documentation.
-
-## Controls (Test Program)
-
-- **WASD** - Move
-- **Arrow Keys** - Rotate camera / Look up-down
-- **Space** - Jump
-- **Enter** - Open/close doors
-- **F** - Toggle fog
-- **M** - Toggle minimap
-- **ESC** - Exit
-
-## Technical Details
-
-### Architecture
-
-- **Raycasting Engine**: DDA algorithm for wall detection
-- **Rendering**: Back-to-front painter's algorithm for multi-level support
-- **Texturing**: Perspective-correct texture mapping
-- **Sprites**: Z-buffered billboard rendering
-- **Physics**: Simple gravity and collision detection
-
-### Performance
-
-- Optimized for 800x600 resolution
-- Configurable strip width (2-4 recommended)
-- FOV: 60-90 degrees recommended
-- Supports up to 1000 sprites, 1000 thin walls, 100 thick walls
-
-### Limitations
-
-- Maximum 3 vertical levels
-- Grid-based collision (128 units per tile)
-- No dynamic lighting (fog only)
-- No texture filtering
-
-## Project Structure
-
-```
-libmod_ray/
-├── libmod_ray.c              # Main module code
-├── libmod_ray.h              # Header definitions
-├── libmod_ray_exports.h      # BennuGD2 exports
-├── libmod_ray_map.c          # Map loading
-├── libmod_ray_raycasting.c   # Raycasting algorithm
-├── libmod_ray_render.c       # Rendering system
-├── libmod_ray_shape.c        # Geometry utilities
-├── test_ray.prg              # Test program
-├── tools/
-│   ├── map_builder.c         # Map conversion tool
-│   ├── README.md             # Tool documentation
-│   └── example/              # Example map files
-└── CMakeLists.txt            # Build configuration
-```
-
-## Credits
-
-Based on Andrew Lim's SDL2 Raycasting Engine:
-https://github.com/andrew-lim/sdl2-raycast
-
-Ported to C and integrated with BennuGD2 by Ruben.
-
-## License
-
-MIT License - See LICENSE file for details
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit pull requests or open issues.
-
-## Roadmap
-
-- [ ] Per-level floor and ceiling textures
-- [ ] Skybox support
-- [ ] Animated textures
-- [ ] Dynamic lighting
-- [ ] Texture filtering options
-- [ ] Minimap implementation
-- [ ] Weapon rendering
-- [ ] Sound integration
-
-## Support
-
-For issues and questions, please open an issue on GitHub.
+El módulo incluye un editor de mapas Qt (`tools/raymap_editor/`) para crear y editar archivos `.raymap`.

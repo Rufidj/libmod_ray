@@ -102,6 +102,7 @@ static int any_space_above(RAY_Raycaster *rc, int x, int y, int z)
 
 static int needs_next_wall(RAY_Raycaster *rc, float playerZ, int x, int y, int z)
 {
+    /* Siempre permitir puertas */
     if (z == 0) {
         int *grid = rc->grids[0];
         if (x >= 0 && y >= 0) {
@@ -111,9 +112,19 @@ static int needs_next_wall(RAY_Raycaster *rc, float playerZ, int x, int y, int z
         }
     }
     
+    /* Calcular altura del ojo y límites del nivel */
     float eyeHeight = rc->tileSize / 2.0f + playerZ;
     float wallBottom = z * rc->tileSize;
     float wallTop = wallBottom + rc->tileSize;
+    
+    /* Si el ojo está dentro del nivel actual, no buscar más niveles
+     * Esto hace que desde dentro de una habitación solo veas ese nivel */
+    if (eyeHeight >= wallBottom && eyeHeight <= wallTop) {
+        return 0;  // Estamos dentro de este nivel, no buscar más
+    }
+    
+    /* Si el ojo está por encima o por debajo, continuar buscando
+     * Esto permite ver edificios completos desde fuera */
     int eyeAboveWall = eyeHeight > wallTop;
     int eyeBelowWall = eyeHeight < wallBottom;
     
@@ -123,6 +134,7 @@ static int needs_next_wall(RAY_Raycaster *rc, float playerZ, int x, int y, int z
     if (eyeBelowWall) {
         return any_space_below(rc, x, y, z);
     }
+    
     return 0;
 }
 

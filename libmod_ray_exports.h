@@ -36,10 +36,13 @@ DLSYSFUNCS __bgdexport(libmod_ray, functions_exports)[] = {
     FUNC("RAY_GET_CAMERA_Z", "", TYPE_FLOAT, libmod_ray_get_camera_z),
     FUNC("RAY_GET_CAMERA_ROT", "", TYPE_FLOAT, libmod_ray_get_camera_rot),
     FUNC("RAY_GET_CAMERA_PITCH", "", TYPE_FLOAT, libmod_ray_get_camera_pitch),
-    FUNC("RAY_SET_FOG", "I", TYPE_INT, libmod_ray_set_fog),
+    FUNC("RAY_SET_FOG", "IIIIFF", TYPE_INT, libmod_ray_set_fog),
     FUNC("RAY_SET_DRAW_MINIMAP", "I", TYPE_INT, libmod_ray_set_draw_minimap),
+    FUNC("RAY_SET_MINIMAP", "IIIIF", TYPE_INT, libmod_ray_set_minimap),
     FUNC("RAY_SET_DRAW_WEAPON", "I", TYPE_INT, libmod_ray_set_draw_weapon),
     FUNC("RAY_SET_SKY_TEXTURE", "I", TYPE_INT, libmod_ray_set_sky_texture),
+    FUNC("RAY_SET_BILLBOARD", "II", TYPE_INT, libmod_ray_set_billboard),
+    FUNC("RAY_CHECK_COLLISION", "FFF", TYPE_INT, libmod_ray_check_collision),
     FUNC("RAY_TOGGLE_DOOR", "", TYPE_INT, libmod_ray_toggle_door),
     FUNC("RAY_ADD_SPRITE", "IFFFIII", TYPE_INT, libmod_ray_add_sprite),
     FUNC("RAY_SET_FLAG", "I", TYPE_INT, libmod_ray_set_flag),
@@ -47,6 +50,7 @@ DLSYSFUNCS __bgdexport(libmod_ray, functions_exports)[] = {
     FUNC("RAY_GET_FLAG_X", "I", TYPE_FLOAT, libmod_ray_get_flag_x),
     FUNC("RAY_GET_FLAG_Y", "I", TYPE_FLOAT, libmod_ray_get_flag_y),
     FUNC("RAY_GET_FLAG_Z", "I", TYPE_FLOAT, libmod_ray_get_flag_z),
+    FUNC("RAY_UPDATE_SPRITE_POSITION", "FFF", TYPE_INT, libmod_ray_update_sprite_position),
     FUNC(NULL, NULL, 0, NULL)
 };
 

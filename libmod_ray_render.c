@@ -19,14 +19,9 @@ extern void ray_update_physics(float delta_time);
    FOG SYSTEM
    ============================================================================ */
 
-#define FOG_R 150.0f
-#define FOG_G 150.0f
-#define FOG_B 150.0f
-#define FOG_START_DISTANCE (RAY_TILE_SIZE * 8)
-
 static uint32_t ray_fog_pixel(uint32_t pixel, float distance)
 {
-    if (distance < FOG_START_DISTANCE) {
+    if (!g_engine.fogOn || distance < g_engine.fog_start_distance) {
         return pixel;
     }
     
@@ -37,15 +32,234 @@ static uint32_t ray_fog_pixel(uint32_t pixel, float distance)
     uint8_t a = (pixel >> 24) & 0xFF;
     
     /* Calcular factor de fog */
-    float fog_factor = (distance - FOG_START_DISTANCE) / (FOG_START_DISTANCE * 2.0f);
+    float fog_range = g_engine.fog_end_distance - g_engine.fog_start_distance;
+    float fog_factor = (distance - g_engine.fog_start_distance) / fog_range;
     if (fog_factor > 1.0f) fog_factor = 1.0f;
     
     /* Interpolar entre color original y color de fog */
-    r = (uint8_t)(r * (1.0f - fog_factor) + FOG_R * fog_factor);
-    g = (uint8_t)(g * (1.0f - fog_factor) + FOG_G * fog_factor);
-    b = (uint8_t)(b * (1.0f - fog_factor) + FOG_B * fog_factor);
+    r = (uint8_t)(r * (1.0f - fog_factor) + g_engine.fog_r * fog_factor);
+    g = (uint8_t)(g * (1.0f - fog_factor) + g_engine.fog_g * fog_factor);
+    b = (uint8_t)(b * (1.0f - fog_factor) + g_engine.fog_b * fog_factor);
     
     return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+/* ============================================================================
+   MINIMAPA
+   ============================================================================ */
+
+static void ray_draw_minimap(GRAPH *dest)
+{
+    if (!g_engine.drawMiniMap || !g_engine.raycaster.grids || !g_engine.raycaster.grids[0]) {
+        return;
+    }
+    
+    int *grid = g_engine.raycaster.grids[0];
+    int grid_width = g_engine.raycaster.gridWidth;
+    int grid_height = g_engine.raycaster.gridHeight;
+    
+    int minimap_x = g_engine.minimap_x;
+    int minimap_y = g_engine.minimap_y;
+    int minimap_size = g_engine.minimap_size;
+    float scale = g_engine.minimap_scale;
+    
+    /* MINIMAPA ESTÁTICO - Mostrar TODO el mapa */
+    /* El punto rojo se mueve, el mapa NO se mueve */
+    int start_x = 0;
+    int start_y = 0;
+    int end_x = grid_width;
+    int end_y = grid_height;
+    
+    /* Calcular escala para que todo el mapa quepa en el minimapa */
+    float map_world_width = grid_width * RAY_TILE_SIZE;
+    float map_world_height = grid_height * RAY_TILE_SIZE;
+    
+    /* Usar la escala más pequeña para que todo quepa */
+    float scale_x = minimap_size / map_world_width;
+    float scale_y = minimap_size / map_world_height;
+    scale = (scale_x < scale_y) ? scale_x : scale_y;
+    
+    /* Fondo del minimapa (negro opaco) */
+    uint32_t bg_color = 0xFF000000;  /* Negro opaco */
+    for (int y = 0; y < minimap_size; y++) {
+        for (int x = 0; x < minimap_size; x++) {
+            int screen_x = minimap_x + x;
+            int screen_y = minimap_y + y;
+            if (screen_x >= 0 && screen_x < g_engine.displayWidth &&
+                screen_y >= 0 && screen_y < g_engine.displayHeight) {
+                gr_put_pixel(dest, screen_x, screen_y, bg_color);
+            }
+        }
+    }
+    
+    /* Borde blanco del minimapa */
+    uint32_t border_color = 0xFFFFFFFF;
+    for (int i = 0; i < minimap_size; i++) {
+        /* Borde superior e inferior */
+        gr_put_pixel(dest, minimap_x + i, minimap_y, border_color);
+        gr_put_pixel(dest, minimap_x + i, minimap_y + minimap_size - 1, border_color);
+        /* Borde izquierdo y derecho */
+        gr_put_pixel(dest, minimap_x, minimap_y + i, border_color);
+        gr_put_pixel(dest, minimap_x + minimap_size - 1, minimap_y + i, border_color);
+    }
+    
+    
+    /* Dibujar celdas del mapa con grid */
+    for (int gy = start_y; gy < end_y; gy++) {
+        for (int gx = start_x; gx < end_x; gx++) {
+            if (gx < 0 || gx >= grid_width || gy < 0 || gy >= grid_height) continue;
+            
+            int cell_value = grid[gx + gy * grid_width];
+            
+            /* Calcular posición en el minimapa (mapa estático) */
+            float cell_world_x = gx * RAY_TILE_SIZE;
+            float cell_world_y = gy * RAY_TILE_SIZE;
+            
+            int map_x = (int)(cell_world_x * scale);
+            int map_y = (int)(cell_world_y * scale);
+            int cell_size = (int)(RAY_TILE_SIZE * scale);
+            if (cell_size < 1) cell_size = 1;
+            
+            /* Color según tipo de celda */
+            uint32_t fill_color = 0xFF202020;  /* Gris muy oscuro (vacío) */
+            uint32_t grid_color = 0xFF404040;  /* Gris oscuro (líneas de grid) */
+            
+            if (cell_value > 0 && cell_value < 1000) {
+                fill_color = 0xFFC0C0FF;  /* Azul claro (pared) */
+                grid_color = 0xFF8080C0;  /* Azul medio (borde de pared) */
+            } else if (cell_value >= 1000) {
+                fill_color = 0xFF00FFFF;  /* Cyan brillante (puerta) */
+                grid_color = 0xFF00C0C0;  /* Cyan oscuro (borde de puerta) */
+            }
+            
+            /* Dibujar relleno de celda */
+            for (int dy = 1; dy < cell_size - 1; dy++) {
+                for (int dx = 1; dx < cell_size - 1; dx++) {
+                    int screen_x = minimap_x + map_x + dx;
+                    int screen_y = minimap_y + map_y + dy;
+                    if (screen_x >= minimap_x && screen_x < minimap_x + minimap_size &&
+                        screen_y >= minimap_y && screen_y < minimap_y + minimap_size) {
+                        gr_put_pixel(dest, screen_x, screen_y, fill_color);
+                    }
+                }
+            }
+            
+            /* Dibujar bordes de celda (grid) */
+            for (int i = 0; i < cell_size; i++) {
+                /* Borde superior e inferior */
+                int top_x = minimap_x + map_x + i;
+                int top_y = minimap_y + map_y;
+                int bottom_y = minimap_y + map_y + cell_size - 1;
+                
+                if (top_x >= minimap_x && top_x < minimap_x + minimap_size) {
+                    if (top_y >= minimap_y && top_y < minimap_y + minimap_size)
+                        gr_put_pixel(dest, top_x, top_y, grid_color);
+                    if (bottom_y >= minimap_y && bottom_y < minimap_y + minimap_size)
+                        gr_put_pixel(dest, top_x, bottom_y, grid_color);
+                }
+                
+                /* Borde izquierdo y derecho */
+                int left_x = minimap_x + map_x;
+                int right_x = minimap_x + map_x + cell_size - 1;
+                int side_y = minimap_y + map_y + i;
+                
+                if (side_y >= minimap_y && side_y < minimap_y + minimap_size) {
+                    if (left_x >= minimap_x && left_x < minimap_x + minimap_size)
+                        gr_put_pixel(dest, left_x, side_y, grid_color);
+                    if (right_x >= minimap_x && right_x < minimap_x + minimap_size)
+                        gr_put_pixel(dest, right_x, side_y, grid_color);
+                }
+            }
+        }
+    }
+    
+    /* Dibujar sprites (Santas) */
+    for (int i = 0; i < g_engine.num_sprites; i++) {
+        RAY_Sprite *sprite = &g_engine.sprites[i];
+        if (sprite->hidden || sprite->cleanup) continue;
+        
+        int sprite_grid_x = (int)(sprite->x / RAY_TILE_SIZE);
+        int sprite_grid_y = (int)(sprite->y / RAY_TILE_SIZE);
+        
+        if (sprite_grid_x >= start_x && sprite_grid_x < end_x &&
+            sprite_grid_y >= start_y && sprite_grid_y < end_y) {
+            
+            /* Calcular posición en minimapa estático */
+            int map_x = (int)(sprite->x * scale);
+            int map_y = (int)(sprite->y * scale);
+            
+            /* Dibujar punto cyan para sprite (Santas) */
+            uint32_t sprite_color = 0xFF00FFFF;  /* Cyan */
+            int sprite_size = 5;
+            for (int dy = -sprite_size; dy <= sprite_size; dy++) {
+                for (int dx = -sprite_size; dx <= sprite_size; dx++) {
+                    int screen_x = minimap_x + map_x + dx;
+                    int screen_y = minimap_y + map_y + dy;
+                    if (screen_x >= minimap_x && screen_x < minimap_x + minimap_size &&
+                        screen_y >= minimap_y && screen_y < minimap_y + minimap_size) {
+                        gr_put_pixel(dest, screen_x, screen_y, sprite_color);
+                    }
+                }
+            }
+        }
+    }
+    
+    
+    /* Dibujar cámara (punto rojo) en su posición real del mapa */
+    /* Posición de la cámara en el mundo */
+    float camera_world_x = g_engine.camera.x;
+    float camera_world_y = g_engine.camera.y;
+    
+    /* Convertir a coordenadas del minimapa */
+    int player_map_x = (int)(camera_world_x * scale);
+    int player_map_y = (int)(camera_world_y * scale);
+    
+    /* Dibujar línea de dirección del jugador (más larga y visible) */
+    float dir_length = 30.0f;  /* Longitud fija en pixels */
+    float dir_x = cosf(g_engine.camera.rot) * dir_length;
+    float dir_y = sinf(g_engine.camera.rot) * dir_length;
+    
+    for (int i = 0; i < (int)dir_length; i++) {
+        float t = i / dir_length;
+        int line_x = minimap_x + player_map_x + (int)(dir_x * t);
+        int line_y = minimap_y + player_map_y + (int)(dir_y * t);
+        if (line_x >= minimap_x && line_x < minimap_x + minimap_size &&
+            line_y >= minimap_y && line_y < minimap_y + minimap_size) {
+            gr_put_pixel(dest, line_x, line_y, 0xFFFFFF00);  /* Amarillo */
+        }
+    }
+    
+    /* DEBUG: Imprimir posición del punto rojo */
+    static int debug_count = 0;
+    if (debug_count < 5) {
+        printf("MINIMAPA: camera=(%.1f, %.1f) scale=%.3f -> map_pos=(%d, %d) minimap_area=(%d,%d,%d,%d)\n",
+               camera_world_x, camera_world_y, scale,
+               player_map_x, player_map_y,
+               minimap_x, minimap_y, minimap_x + minimap_size, minimap_y + minimap_size);
+        printf("PUNTO ROJO: Se dibujará en screen=(%d, %d) con radio 20\n", 
+               minimap_x + player_map_x, minimap_y + player_map_y);
+        debug_count++;
+    }
+    
+    
+    /* Dibujar punto del jugador - CÍRCULO BLANCO */
+    uint32_t player_color = 0xFFFFFFFF;  /* BLANCO */
+    int player_size = 6;  /* Radio del círculo */
+    
+    /* Dibujar círculo */
+    for (int dy = -player_size; dy <= player_size; dy++) {
+        for (int dx = -player_size; dx <= player_size; dx++) {
+            /* Solo dibujar si está dentro del círculo */
+            if (dx*dx + dy*dy <= player_size*player_size) {
+                int screen_x = minimap_x + player_map_x + dx;
+                int screen_y = minimap_y + player_map_y + dy;
+                if (screen_x >= minimap_x && screen_x < minimap_x + minimap_size &&
+                    screen_y >= minimap_y && screen_y < minimap_y + minimap_size) {
+                    gr_put_pixel(dest, screen_x, screen_y, player_color);
+                }
+            }
+        }
+    }
 }
 
 /* ============================================================================
@@ -111,8 +325,10 @@ static void ray_draw_wall_strip(GRAPH *dest, RAY_RayHit *rayHit,
     for (int y = 0; y < wall_screen_height; y++) {
         int dst_y = screen_y + y;
         
-        /* No dibujar donde está el techo */
-        if (dst_y < ceiling_end_y) continue;
+        /* COMENTADO: Este check bloqueaba paredes de niveles superiores
+         * Las paredes del nivel 1+ están más arriba (dst_y menor) y este check las saltaba
+         * if (dst_y < ceiling_end_y) continue;
+         */
         
         if (dst_y < 0 || dst_y >= g_engine.displayHeight) continue;
         
@@ -157,102 +373,131 @@ static void ray_draw_floor_ceiling_strip(GRAPH *dest, RAY_RayHit *rayHit,
     
     
     /* ========================================
-       FLOOR RENDERING
+       FLOOR RENDERING - SISTEMA RELATIVO
+       Cada nivel es un espacio independiente de 0-128
        ======================================== */
     
-    if (!g_engine.floorGrid) {
-        return; // No floor data
-    }
-    
-    int floor_start_y;
-    
-    if (wall_screen_height == 0) {
-        // No hay paredes sólidas - renderizar desde el centro
-        floor_start_y = (int)center_plane;
-    } else {
-        // Hay paredes - renderizar DESPUÉS de la pared para no sobreescribirla
-        floor_start_y = (g_engine.displayHeight - wall_screen_height) / 2 + wall_screen_height;
-        floor_start_y += (int)player_screen_z;
-        
-        // Asegurar que no empiece antes del centro
-        if (floor_start_y < center_plane) {
-            floor_start_y = (int)center_plane;
-        }
-    }
-    
-    for (int screen_y = floor_start_y; screen_y < g_engine.displayHeight; screen_y++) {
-        if (screen_y - center_plane <= 0) continue;
-        
-        float ratio = eye_height / (screen_y - center_plane);
-        float straight_distance = g_engine.viewDist * ratio;
-        float diagonal_distance = straight_distance * cos_factor;
-        
-        float x_end = g_engine.camera.x + diagonal_distance * cosf(rayHit->rayAngle);
-        float y_end = g_engine.camera.y + diagonal_distance * -sinf(rayHit->rayAngle);
-        
-        int tile_x = (int)(x_end / RAY_TILE_SIZE);
-        int tile_y = (int)(y_end / RAY_TILE_SIZE);
-        
-        if (tile_x < 0 || tile_x >= g_engine.raycaster.gridWidth ||
-            tile_y < 0 || tile_y >= g_engine.raycaster.gridHeight) {
-            continue;
-        }
-        
-        /* Obtener tipo de tile de suelo */
-        int floor_tile_type = g_engine.floorGrid[tile_x + tile_y * g_engine.raycaster.gridWidth];
-        
-        if (floor_tile_type <= 0) continue;
-        
-        /* Obtener textura del FPG */
-        GRAPH *floor_texture = bitmap_get(g_engine.fpg_id, floor_tile_type);
-        if (!floor_texture) continue;
-        
-        /* Calcular coordenadas de textura */
-        int x = ((int)x_end) % RAY_TILE_SIZE;
-        int y = ((int)y_end) % RAY_TILE_SIZE;
-        if (x < 0) x += RAY_TILE_SIZE;
-        if (y < 0) y += RAY_TILE_SIZE;
-        
-        int texture_x = (x * floor_texture->width) / RAY_TILE_SIZE;
-        int texture_y = (y * floor_texture->height) / RAY_TILE_SIZE;
-        
-        uint32_t pixel = ray_sample_texture(floor_texture, texture_x, texture_y);
-        
-        /* Aplicar fog */
-        if (g_engine.fogOn) {
-            pixel = ray_fog_pixel(pixel, diagonal_distance);
-        }
-        
-        /* Dibujar pixel(s) */
-        for (int sx = 0; sx < strip_width && screen_x + sx < g_engine.displayWidth; sx++) {
-            gr_put_pixel(dest, screen_x + sx, screen_y, pixel);
-        }
-    }
-    
-    /* ========================================
-       CEILING RENDERING
-       ======================================== */
-    
-    if (!g_engine.ceilingGrid) {
-        return; // No ceiling data
-    }
-    
-    /* Calcular nivel de la cámara */
+    /* Calcular nivel actual basado en Z de cámara */
     int camera_level = (int)(g_engine.camera.z / RAY_TILE_SIZE);
     if (camera_level < 0) camera_level = 0;
     if (camera_level > 2) camera_level = 2;
     
-    /* Solo renderizar el techo del nivel donde está la cámara */
-    /* TODO: Implementar grids de techo separados por nivel para renderizado multinivel */
-    float ceiling_height = (camera_level + 1) * RAY_TILE_SIZE;
+    /* Verificar si hay grid de suelo para este nivel */
+    if (!g_engine.floorGrids[camera_level]) {
+        return; // No floor data
+    }
+    
+    /* Calcular Z relativo dentro del nivel actual (0-128) */
+    float level_base_z = camera_level * RAY_TILE_SIZE;
+    float relative_z = g_engine.camera.z - level_base_z;
+    
+    /* Altura del ojo relativa al suelo del nivel (siempre 64 + relative_z) */
+    float relative_eye_height = RAY_TILE_SIZE / 2.0f + relative_z;
+    
+    /* Calcular center_plane relativo - ajustado por la altura dentro del nivel */
+    float relative_center_plane = center_plane;
+        
+        /* Calcular límite Y en pantalla para este nivel de suelo */
+        int floor_start_y;
+        
+        if (wall_screen_height == 0) {
+            // No hay paredes sólidas - renderizar desde el centro
+            floor_start_y = (int)relative_center_plane;
+        } else {
+            // Hay paredes - renderizar DESPUÉS de la pared
+            floor_start_y = (g_engine.displayHeight - wall_screen_height) / 2 + wall_screen_height;
+            floor_start_y += (int)player_screen_z;
+            
+            // Asegurar que no empiece antes del centro
+            if (floor_start_y < relative_center_plane) {
+                floor_start_y = (int)relative_center_plane;
+            }
+        }
+        
+        /* Solo renderizar si este suelo es visible en pantalla */
+        if (floor_start_y >= g_engine.displayHeight) return;
+        
+        /* Renderizar suelo con coordenadas relativas */
+        for (int screen_y = floor_start_y; screen_y < g_engine.displayHeight; screen_y++) {
+            if (screen_y - relative_center_plane <= 0) continue;
+            
+            /* Usar altura relativa dentro del nivel */
+            float ratio = relative_eye_height / (screen_y - relative_center_plane);
+            float straight_distance = g_engine.viewDist * ratio;
+            float diagonal_distance = straight_distance * cos_factor;
+            
+            float x_end = g_engine.camera.x + diagonal_distance * cosf(rayHit->rayAngle);
+            float y_end = g_engine.camera.y + diagonal_distance * -sinf(rayHit->rayAngle);
+            
+            int tile_x = (int)(x_end / RAY_TILE_SIZE);
+            int tile_y = (int)(y_end / RAY_TILE_SIZE);
+            
+            if (tile_x < 0 || tile_x >= g_engine.raycaster.gridWidth ||
+                tile_y < 0 || tile_y >= g_engine.raycaster.gridHeight) {
+                continue;
+            }
+            
+            /* Obtener tipo de tile de suelo del nivel actual */
+            int floor_tile_type = g_engine.floorGrids[camera_level][tile_x + tile_y * g_engine.raycaster.gridWidth];
+            
+            if (floor_tile_type <= 0) continue;
+            
+            /* Obtener textura del FPG */
+            GRAPH *floor_texture = bitmap_get(g_engine.fpg_id, floor_tile_type);
+            if (!floor_texture) continue;
+            
+            /* Calcular coordenadas de textura */
+            int x = ((int)x_end) % RAY_TILE_SIZE;
+            int y = ((int)y_end) % RAY_TILE_SIZE;
+            if (x < 0) x += RAY_TILE_SIZE;
+            if (y < 0) y += RAY_TILE_SIZE;
+            
+            int texture_x = (x * floor_texture->width) / RAY_TILE_SIZE;
+            int texture_y = (y * floor_texture->height) / RAY_TILE_SIZE;
+            
+            uint32_t pixel = ray_sample_texture(floor_texture, texture_x, texture_y);
+            
+            /* Aplicar fog */
+            if (g_engine.fogOn) {
+                pixel = ray_fog_pixel(pixel, diagonal_distance);
+            }
+            
+            /* Dibujar pixel(s) */
+            for (int sx = 0; sx < strip_width && screen_x + sx < g_engine.displayWidth; sx++) {
+                gr_put_pixel(dest, screen_x + sx, screen_y, pixel);
+            }
+        }
+    
+    
+    
+    /* ========================================
+       CEILING RENDERING - SISTEMA RELATIVO
+       Techo siempre a 128 unidades relativas
+       ======================================== */
+    
+    /* Usar nivel actual (ya calculado arriba) */
+    
+    /* Verificar si hay grid de techo para este nivel */
+    if (!g_engine.ceilingGrids[camera_level]) {
+        return; // No ceiling data
+    }
+    
+    /* Altura del techo relativa: siempre 128 desde el suelo del nivel */
+    float relative_ceiling_height = RAY_TILE_SIZE;
     
     int ceiling_end_y = (g_engine.displayHeight - wall_screen_height) / 2;
     ceiling_end_y += (int)player_screen_z;
     
     for (int screen_y = 0; screen_y < ceiling_end_y && screen_y < g_engine.displayHeight; screen_y++) {
-        if (center_plane - screen_y <= 0) continue;
+        if (relative_center_plane - screen_y <= 0) continue;
         
-        float ratio = (ceiling_height - eye_height) / (center_plane - screen_y);
+        /* Distancia relativa al techo */
+        float distance_to_ceiling = relative_ceiling_height - relative_eye_height;
+        
+        /* Si estamos por encima del techo, no renderizar */
+        if (distance_to_ceiling <= 0.1f) continue;
+        
+        float ratio = distance_to_ceiling / (relative_center_plane - screen_y);
         float straight_distance = g_engine.viewDist * ratio;
         float diagonal_distance = straight_distance * cos_factor;
         
@@ -269,8 +514,8 @@ static void ray_draw_floor_ceiling_strip(GRAPH *dest, RAY_RayHit *rayHit,
             continue;
         }
         
-        /* Obtener tipo de tile de techo del grid actual */
-        int ceiling_tile_type = g_engine.ceilingGrid[tile_x + tile_y * g_engine.raycaster.gridWidth];
+        /* Obtener tipo de tile de techo del nivel actual */
+        int ceiling_tile_type = g_engine.ceilingGrids[camera_level][tile_x + tile_y * g_engine.raycaster.gridWidth];
         
         if (ceiling_tile_type <= 0) continue;
         
@@ -367,13 +612,43 @@ static void ray_draw_sprites(GRAPH *dest, float *z_buffer)
         
         int screen_y = g_engine.displayHeight / 2 - (int)(sprite_screen_height / 2) + (int)sprite_screen_z;
         
+        /* ========================================
+           BILLBOARD - Calcular frame basado en ángulo
+           ======================================== */
+        int billboard_frame = -1;  // -1 = no usar billboard
+        
+        if (g_engine.billboard_enabled && g_engine.billboard_directions > 0 && sprite->process_ptr != NULL) {
+            /* Calcular ángulo del sprite hacia la cámara */
+            float angle_to_camera = atan2f(dy, dx);
+            
+            /* Calcular ángulo relativo considerando la rotación del sprite */
+            float relative_angle = angle_to_camera - sprite->rot;
+            
+            /* Normalizar a rango [0, 2π] */
+            while (relative_angle < 0) relative_angle += RAY_TWO_PI;
+            while (relative_angle >= RAY_TWO_PI) relative_angle -= RAY_TWO_PI;
+            
+            /* Convertir ángulo a índice de dirección (0 a num_directions-1) */
+            float angle_per_direction = RAY_TWO_PI / g_engine.billboard_directions;
+            billboard_frame = (int)((relative_angle + angle_per_direction / 2.0f) / angle_per_direction);
+            billboard_frame = billboard_frame % g_engine.billboard_directions;
+        }
+        
         /* Obtener textura del sprite */
         GRAPH *sprite_texture = NULL;
         
         /* Si el sprite está vinculado a un proceso, usar su graph dinámico */
         if (sprite->process_ptr != NULL) {
-            /* Usar instance_graph() para obtener el graph del proceso */
-            sprite_texture = instance_graph(sprite->process_ptr);
+            /* Si billboard está activo y tenemos un FPG, usar el frame calculado */
+            if (billboard_frame >= 0 && g_engine.fpg_id > 0) {
+                /* Obtener el gráfico directamente del FPG usando el frame billboard */
+                sprite_texture = bitmap_get(g_engine.fpg_id, billboard_frame);
+            }
+            
+            /* Si no obtuvimos textura con billboard, usar instance_graph normal */
+            if (!sprite_texture) {
+                sprite_texture = instance_graph(sprite->process_ptr);
+            }
             
             /* Si el proceso no tiene graph válido, usar textureID como fallback */
             if (!sprite_texture && sprite->textureID > 0) {
@@ -415,11 +690,12 @@ static void ray_draw_sprites(GRAPH *dest, float *z_buffer)
                 int tex_y = (int)tex_y_f;
                 if (tex_y < 0 || tex_y >= sprite_texture->height) continue;
                 
-                uint32_t pixel = ray_sample_texture(sprite_texture, tex_x, tex_y);
+                /* Obtener pixel directamente del gráfico (respeta color key) */
+                uint32_t pixel = gr_get_pixel(sprite_texture, tex_x, tex_y);
                 
-                /* Verificar transparencia */
-                uint8_t alpha = (pixel >> 24) & 0xFF;
-                if (alpha == 0) continue;
+                /* Verificar transparencia - comparar con color key del gráfico */
+                /* En BennuGD, el pixel 0 suele ser el color transparente */
+                if (pixel == 0) continue;
                 
                 /* Aplicar fog */
                 if (g_engine.fogOn) {
@@ -557,6 +833,18 @@ void ray_render_frame(GRAPH *dest)
         
         rayhit_counts[strip] = num_hits;
         
+        // DEBUG: Verificar hits multinivel
+        static int debug_count = 0;
+        if (debug_count < 5 && num_hits > 0) {
+            printf("RAY_DEBUG: Strip %d tiene %d hits:\n", strip, num_hits);
+            for (int h = 0; h < num_hits; h++) {
+                RAY_RayHit *hit = &all_rayhits[strip * RAY_MAX_RAYHITS + h];
+                printf("  Hit %d: level=%d, wallType=%d, distance=%.2f\n", 
+                       h, hit->level, hit->wallType, hit->distance);
+            }
+            debug_count++;
+        }
+        
         // Actualizar z-buffer con el hit más cercano
         for (int h = 0; h < num_hits; h++) {
             RAY_RayHit *hit = &all_rayhits[strip * RAY_MAX_RAYHITS + h];
@@ -685,6 +973,33 @@ void ray_render_frame(GRAPH *dest)
             RAY_RayHit *rayHit = &hits[h];
             
             if (rayHit->wallType == 0) continue;
+            
+            /* FILTRADO MULTINIVEL SIMPLIFICADO:
+             * Determinar si la cámara está "dentro" de un edificio cerrado
+             * verificando si hay techo en la posición de la cámara.
+             */
+            int camera_level = (int)(g_engine.camera.z / RAY_TILE_SIZE);
+            if (camera_level < 0) camera_level = 0;
+            if (camera_level > 2) camera_level = 2;
+            
+            /* Verificar si hay techo en la posición de la cámara */
+            int camera_tile_x = (int)(g_engine.camera.x / RAY_TILE_SIZE);
+            int camera_tile_y = (int)(g_engine.camera.y / RAY_TILE_SIZE);
+            int is_inside = 0;
+            
+            if (camera_tile_x >= 0 && camera_tile_x < g_engine.raycaster.gridWidth &&
+                camera_tile_y >= 0 && camera_tile_y < g_engine.raycaster.gridHeight &&
+                g_engine.ceilingGrids[camera_level]) {
+                int camera_grid_offset = camera_tile_x + camera_tile_y * g_engine.raycaster.gridWidth;
+                int ceiling_tile = g_engine.ceilingGrids[camera_level][camera_grid_offset];
+                is_inside = (ceiling_tile > 0);  // Hay techo = estamos dentro
+            }
+            
+            /* Si estamos dentro, solo renderizar el nivel actual */
+            if (is_inside && rayHit->level != camera_level) {
+                continue;
+            }
+            /* Si estamos fuera, renderizar todos los niveles */
             
             
             // Calcular altura de pared en pantalla
@@ -822,6 +1137,9 @@ void ray_render_frame(GRAPH *dest)
     
     // Renderizar sprites (después de paredes)
     ray_draw_sprites(dest, z_buffer);
+    
+    // Renderizar minimapa (al final, encima de todo)
+    ray_draw_minimap(dest);
     
     // Liberar memoria
     free(all_rayhits);

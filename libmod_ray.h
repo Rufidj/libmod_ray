@@ -246,9 +246,9 @@ typedef struct {
     int thick_walls_capacity;
     
     
-    /* Grids de suelo y techo - Nivel 0 solamente por ahora */
-    int *floorGrid;                  /* Grid de suelo [x + y * width] */
-    int *ceilingGrid;                /* Grid de techo [x + y * width] */
+    /* Grids de suelo y techo - POR NIVEL (0, 1, 2) */
+    int *floorGrids[3];                  /* Grids de suelo por nivel [level][x + y * width] */
+    int *ceilingGrids[3];                /* Grids de techo por nivel [level][x + y * width] */
     
     /* Puertas */
     RAY_Door *doors;                 /* Estado de puertas [x + y * width] */
@@ -275,8 +275,22 @@ typedef struct {
     int skipDrawnSkyboxStrips;
     int skipDrawnHighestCeilingStrips;
     
+    /* Fog configuration */
+    uint8_t fog_r, fog_g, fog_b;  /* Color del fog (RGB) */
+    float fog_start_distance;     /* Distancia donde empieza el fog */
+    float fog_end_distance;       /* Distancia donde el fog es completo */
+    
+    /* Minimapa configuration */
+    int minimap_size;             /* Tamaño del minimapa en pixels */
+    int minimap_x, minimap_y;     /* Posición en pantalla */
+    float minimap_scale;          /* Escala del minimapa */
+    
     /* Nivel más alto de techo */
     int highestCeilingLevel;
+    
+    /* Billboard - Sistema de sprites mirando a cámara */
+    int billboard_enabled;      /* 1 = activo, 0 = desactivado */
+    int billboard_directions;   /* Número de direcciones (típicamente 12) */
     
     /* Inicializado */
     int initialized;
@@ -318,6 +332,8 @@ extern int64_t libmod_ray_render(INSTANCE *my, int64_t *params);
 extern int64_t libmod_ray_set_fog(INSTANCE *my, int64_t *params);
 extern int64_t libmod_ray_set_draw_minimap(INSTANCE *my, int64_t *params);
 extern int64_t libmod_ray_set_draw_weapon(INSTANCE *my, int64_t *params);
+extern int64_t libmod_ray_set_billboard(INSTANCE *my, int64_t *params);
+extern int64_t libmod_ray_check_collision(INSTANCE *my, int64_t *params);
 
 /* Puertas */
 extern int64_t libmod_ray_toggle_door(INSTANCE *my, int64_t *params);
@@ -332,6 +348,8 @@ extern int64_t libmod_ray_clear_flag(INSTANCE *my, int64_t *params);
 extern int64_t libmod_ray_get_flag_x(INSTANCE *my, int64_t *params);
 extern int64_t libmod_ray_get_flag_y(INSTANCE *my, int64_t *params);
 extern int64_t libmod_ray_get_flag_z(INSTANCE *my, int64_t *params);
+extern int64_t libmod_ray_update_sprite_position(INSTANCE *my, int64_t *params);
+extern int64_t libmod_ray_set_minimap(INSTANCE *my, int64_t *params);
 
 /* ============================================================================
    FUNCIONES INTERNAS - Declaraciones

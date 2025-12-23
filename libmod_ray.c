@@ -6,6 +6,7 @@
 
 #include "libmod_ray.h"
 #include <stdlib.h>
+#include <float.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -103,6 +104,23 @@ int64_t libmod_ray_init(INSTANCE *my, int64_t *params) {
     g_engine.skipDrawnHighestCeilingStrips = 1;
     g_engine.highestCeilingLevel = 3;
     
+    /* Fog - Configuración por defecto */
+    g_engine.fog_r = 150;
+    g_engine.fog_g = 150;
+    g_engine.fog_b = 180;
+    g_engine.fog_start_distance = RAY_TILE_SIZE * 8;  /* 8 baldosas */
+    g_engine.fog_end_distance = RAY_TILE_SIZE * 20;   /* 20 baldosas */
+    
+    /* Minimapa - Configuración por defecto */
+    g_engine.minimap_size = 200;
+    g_engine.minimap_x = 10;
+    g_engine.minimap_y = 10;
+    g_engine.minimap_scale = 0.5f;
+    
+    /* Billboard - Activado por defecto con 12 direcciones */
+    g_engine.billboard_enabled = 1;
+    g_engine.billboard_directions = 12;
+    
     g_engine.initialized = 1;
     
     printf("RAY: Motor inicializado - %dx%d, FOV=%d, stripWidth=%d, rayCount=%d\n",
@@ -158,14 +176,16 @@ int64_t libmod_ray_shutdown(INSTANCE *my, int64_t *params) {
         g_engine.raycaster.grids = NULL;
     }
     
-    /* Liberar floor/ceiling grids */
-    if (g_engine.floorGrid) {
-        free(g_engine.floorGrid);
-        g_engine.floorGrid = NULL;
-    }
-    if (g_engine.ceilingGrid) {
-        free(g_engine.ceilingGrid);
-        g_engine.ceilingGrid = NULL;
+    /* Liberar floor/ceiling grids por nivel */
+    for (int level = 0; level < 3; level++) {
+        if (g_engine.floorGrids[level]) {
+            free(g_engine.floorGrids[level]);
+            g_engine.floorGrids[level] = NULL;
+        }
+        if (g_engine.ceilingGrids[level]) {
+            free(g_engine.ceilingGrids[level]);
+            g_engine.ceilingGrids[level] = NULL;
+        }
     }
     
     /* Liberar doors */
@@ -542,12 +562,6 @@ void ray_update_physics(float delta_time) {
    CONFIGURACIÓN
    ============================================================================ */
 
-int64_t libmod_ray_set_fog(INSTANCE *my, int64_t *params) {
-    if (!g_engine.initialized) return 0;
-    g_engine.fogOn = (int)params[0];
-    return 1;
-}
-
 int64_t libmod_ray_set_draw_minimap(INSTANCE *my, int64_t *params) {
     if (!g_engine.initialized) return 0;
     g_engine.drawMiniMap = (int)params[0];
@@ -564,6 +578,23 @@ int64_t libmod_ray_set_sky_texture(INSTANCE *my, int64_t *params) {
     if (!g_engine.initialized) return 0;
     g_engine.skyTextureID = (int)params[0];
     return 1;
+}
+
+int64_t libmod_ray_set_billboard(INSTANCE *my, int64_t *params) {
+    if (!g_engine.initialized) return 0;
+    g_engine.billboard_enabled = (int)params[0];
+    g_engine.billboard_directions = (int)params[1];
+    return 1;
+}
+
+int64_t libmod_ray_check_collision(INSTANCE *my, int64_t *params) {
+    if (!g_engine.initialized) return 0;
+    
+    float x = *(float*)&params[0];
+    float y = *(float*)&params[1];
+    float radius = *(float*)&params[2];
+    
+    return ray_check_collision(x, y, radius);
 }
 
 /* ============================================================================
@@ -885,6 +916,69 @@ int64_t libmod_ray_get_flag_z(INSTANCE *my, int64_t *params) {
     }
     
     return 0;
+}
+
+int64_t libmod_ray_update_sprite_position(INSTANCE *my, int64_t *params) {
+    if (!g_engine.initialized) {
+        fprintf(stderr, "RAY_UPDATE_SPRITE_POSITION: Motor no inicializado\n");
+        return 0;
+    }
+    if (!my) {
+        fprintf(stderr, "RAY_UPDATE_SPRITE_POSITION: Instancia nula\n");
+        return 0;
+    }
+    
+    float x = *(float*)&params[0];
+    float y = *(float*)&params[1];
+    float z = *(float*)&params[2];
+    
+    /* Verificar que los valores son válidos */
+    if (isnan(x) || isnan(y) || isnan(z)) {
+        fprintf(stderr, "RAY_UPDATE_SPRITE_POSITION: Valores NaN detectados (x=%f, y=%f, z=%f)\n", x, y, z);
+        return 0;
+    }
+    
+    /* Buscar el sprite vinculado a este proceso */
+    for (int i = 0; i < g_engine.num_sprites; i++) {
+        if (g_engine.sprites[i].process_ptr == my) {
+            g_engine.sprites[i].x = x;
+            g_engine.sprites[i].y = y;
+            g_engine.sprites[i].z = z;
+            return 1;
+        }
+    }
+    
+    /* No se encontró el sprite - esto es normal si aún no se ha llamado a RAY_SET_FLAG */
+    return 0;
+}
+
+/* ============================================================================
+   FOG Y MINIMAPA - Configuración
+   ============================================================================ */
+
+int64_t libmod_ray_set_fog(INSTANCE *my, int64_t *params) {
+    if (!g_engine.initialized) return 0;
+    
+    g_engine.fogOn = (int)params[0];
+    g_engine.fog_r = (uint8_t)params[1];
+    g_engine.fog_g = (uint8_t)params[2];
+    g_engine.fog_b = (uint8_t)params[3];
+    g_engine.fog_start_distance = *(float*)&params[4];
+    g_engine.fog_end_distance = *(float*)&params[5];
+    
+    return 1;
+}
+
+int64_t libmod_ray_set_minimap(INSTANCE *my, int64_t *params) {
+    if (!g_engine.initialized) return 0;
+    
+    g_engine.drawMiniMap = (int)params[0];
+    g_engine.minimap_size = (int)params[1];
+    g_engine.minimap_x = (int)params[2];
+    g_engine.minimap_y = (int)params[3];
+    g_engine.minimap_scale = *(float*)&params[4];
+    
+    return 1;
 }
 
 /* ============================================================================
