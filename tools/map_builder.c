@@ -128,6 +128,120 @@ int read_grid(const char *filename, int **grid, int *width, int *height) {
     return 1;
 }
 
+/* Leer múltiples grids desde un archivo con secciones por nivel */
+/* Formato esperado:
+   # Nivel 0
+   1,2,3,...
+   ...
+   # Nivel 1
+   4,5,6,...
+   ...
+*/
+int read_multi_level_grid(const char *filename, int ***grids_out, int *width, int *height, int num_levels) {
+    FILE *f = fopen(filename, "r");
+    if (!f) {
+        fprintf(stderr, "Error: No se puede abrir %s\n", filename);
+        return 0;
+    }
+    
+    char line[MAX_LINE];
+    int current_level = -1;
+    int rows_per_level = 0;
+    int cols = 0;
+    
+    /* Primera pasada: determinar dimensiones */
+    while (fgets(line, sizeof(line), f)) {
+        char *trimmed = trim(line);
+        if (strlen(trimmed) == 0) continue;
+        
+        /* Detectar comentario de nivel - debe ser "# Nivel X" */
+        if (trimmed[0] == '#') {
+            /* Buscar patrón "Nivel" seguido de un número */
+            char *nivel_pos = strstr(trimmed, "Nivel");
+            if (!nivel_pos) nivel_pos = strstr(trimmed, "nivel");
+            if (!nivel_pos) nivel_pos = strstr(trimmed, "NIVEL");
+            
+            if (nivel_pos) {
+                /* Verificar que después de "Nivel" hay un espacio y un número */
+                char *after = nivel_pos + 5; /* Saltar "Nivel" */
+                while (*after == ' ') after++;
+                if (isdigit(*after)) {
+                    current_level++;
+                }
+            }
+            continue;
+        }
+        
+        if (current_level < 0) continue; /* Ignorar datos antes del primer nivel */
+        
+        /* Contar columnas en primera fila del primer nivel */
+        if (current_level == 0 && cols == 0) {
+            char temp[MAX_LINE];
+            strcpy(temp, trimmed);
+            char *token = strtok(temp, ",");
+            while (token) {
+                cols++;
+                token = strtok(NULL, ",");
+            }
+        }
+        
+        if (current_level == 0) {
+            rows_per_level++;
+        }
+    }
+    
+    if (rows_per_level == 0 || cols == 0) {
+        fprintf(stderr, "Error: No se encontraron datos válidos en %s\n", filename);
+        fclose(f);
+        return 0;
+    }
+    
+    *width = cols;
+    *height = rows_per_level;
+    
+    /* Allocar arrays */
+    *grids_out = (int**)malloc(num_levels * sizeof(int*));
+    for (int i = 0; i < num_levels; i++) {
+        (*grids_out)[i] = (int*)calloc(rows_per_level * cols, sizeof(int));
+    }
+    
+    /* Segunda pasada: leer datos */
+    rewind(f);
+    current_level = -1;
+    int current_row = 0;
+    
+    while (fgets(line, sizeof(line), f)) {
+        char *trimmed = trim(line);
+        if (strlen(trimmed) == 0) continue;
+        
+        /* Detectar comentario de nivel */
+        if (trimmed[0] == '#') {
+            if (strstr(trimmed, "Nivel") || strstr(trimmed, "nivel") || strstr(trimmed, "NIVEL")) {
+                current_level++;
+                current_row = 0;
+            }
+            continue;
+        }
+        
+        if (current_level < 0 || current_level >= num_levels) continue;
+        if (current_row >= rows_per_level) continue;
+        
+        /* Leer fila */
+        int col = 0;
+        char *token = strtok(trimmed, ",");
+        while (token && col < cols) {
+            (*grids_out)[current_level][current_row * cols + col] = atoi(trim(token));
+            col++;
+            token = strtok(NULL, ",");
+        }
+        current_row++;
+    }
+    
+    fclose(f);
+    printf("Multi-level grid cargado: %s (%dx%d x %d niveles)\n", filename, cols, rows_per_level, num_levels);
+    return 1;
+}
+
 /* Leer sprites desde archivo */
 int read_sprites(const char *filename, SpriteData *sprites, int *count) {
     FILE *f = fopen(filename, "r");
@@ -235,7 +349,6 @@ int main(int argc, char *argv[]) {
     
     /* Leer grids */
     int *grid0 = NULL, *grid1 = NULL, *grid2 = NULL;
-    int *floor_grid = NULL, *ceiling_grid = NULL;
     int width = 0, height = 0;
     
     if (!read_grid(grid0_file, &grid0, &width, &height)) {
@@ -278,10 +391,11 @@ int main(int argc, char *argv[]) {
         grid2 = (int*)calloc(width * height, sizeof(int));
     }
     
-    /* Floor grid (opcional) */
+    /* Floor grids (multi-nivel) */
+    int **floor_grids = NULL;
     if (strlen(floor_file) > 0) {
         int w, h;
-        if (!read_grid(floor_file, &floor_grid, &w, &h)) {
+        if (!read_multi_level_grid(floor_file, &floor_grids, &w, &h, 3)) {
             free(grid0);
             free(grid1);
             free(grid2);
@@ -292,21 +406,27 @@ int main(int argc, char *argv[]) {
             free(grid0);
             free(grid1);
             free(grid2);
-            free(floor_grid);
+            for (int i = 0; i < 3; i++) free(floor_grids[i]);
+            free(floor_grids);
             return 1;
         }
     } else {
-        floor_grid = (int*)calloc(width * height, sizeof(int));
+        floor_grids = (int**)malloc(3 * sizeof(int*));
+        for (int i = 0; i < 3; i++) {
+            floor_grids[i] = (int*)calloc(width * height, sizeof(int));
+        }
     }
     
-    /* Ceiling grid (opcional) */
+    /* Ceiling grids (multi-nivel) */
+    int **ceiling_grids = NULL;
     if (strlen(ceiling_file) > 0) {
         int w, h;
-        if (!read_grid(ceiling_file, &ceiling_grid, &w, &h)) {
+        if (!read_multi_level_grid(ceiling_file, &ceiling_grids, &w, &h, 3)) {
             free(grid0);
             free(grid1);
             free(grid2);
-            free(floor_grid);
+            for (int i = 0; i < 3; i++) free(floor_grids[i]);
+            free(floor_grids);
             return 1;
         }
         if (w != width || h != height) {
@@ -314,12 +434,17 @@ int main(int argc, char *argv[]) {
             free(grid0);
             free(grid1);
             free(grid2);
-            free(floor_grid);
-            free(ceiling_grid);
+            for (int i = 0; i < 3; i++) free(floor_grids[i]);
+            free(floor_grids);
+            for (int i = 0; i < 3; i++) free(ceiling_grids[i]);
+            free(ceiling_grids);
             return 1;
         }
     } else {
-        ceiling_grid = (int*)calloc(width * height, sizeof(int));
+        ceiling_grids = (int**)malloc(3 * sizeof(int*));
+        for (int i = 0; i < 3; i++) {
+            ceiling_grids[i] = (int*)calloc(width * height, sizeof(int));
+        }
     }
     
     /* Leer sprites (opcional) */
@@ -330,14 +455,21 @@ int main(int argc, char *argv[]) {
     }
     
     /* Escribir archivo .raymap */
+    /* Eliminar archivo anterior si existe para evitar datos corruptos */
+    remove(output_file);
+    
     FILE *out = fopen(output_file, "wb");
     if (!out) {
         fprintf(stderr, "Error: No se puede crear %s\n", output_file);
         free(grid0);
         free(grid1);
         free(grid2);
-        free(floor_grid);
-        free(ceiling_grid);
+        for (int i = 0; i < 3; i++) {
+            free(floor_grids[i]);
+            free(ceiling_grids[i]);
+        }
+        free(floor_grids);
+        free(ceiling_grids);
         return 1;
     }
     
@@ -372,9 +504,13 @@ int main(int argc, char *argv[]) {
         fwrite(&sprites[i].rot, sizeof(float), 1, out);
     }
     
-    /* Floor y ceiling */
-    fwrite(floor_grid, sizeof(int), width * height, out);
-    fwrite(ceiling_grid, sizeof(int), width * height, out);
+    /* Floor y ceiling - 3 grids de cada uno */
+    for (int level = 0; level < 3; level++) {
+        fwrite(floor_grids[level], sizeof(int), width * height, out);
+    }
+    for (int level = 0; level < 3; level++) {
+        fwrite(ceiling_grids[level], sizeof(int), width * height, out);
+    }
     
     fclose(out);
     
@@ -382,8 +518,12 @@ int main(int argc, char *argv[]) {
     free(grid0);
     free(grid1);
     free(grid2);
-    free(floor_grid);
-    free(ceiling_grid);
+    for (int i = 0; i < 3; i++) {
+        free(floor_grids[i]);
+        free(ceiling_grids[i]);
+    }
+    free(floor_grids);
+    free(ceiling_grids);
     
     printf("\n=== Mapa creado exitosamente ===\n");
     printf("Archivo: %s\n", output_file);
