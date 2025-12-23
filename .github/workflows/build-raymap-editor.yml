@@ -50,13 +50,44 @@ jobs:
       working-directory: tools/raymap_editor
       run: cmake --build build --config Release -j$(nproc)
     
+    - name: Install to AppDir
+      working-directory: tools/raymap_editor
+      run: |
+        DESTDIR=AppDir cmake --install build
+        mkdir -p AppDir/usr/bin
+        cp build/raymap_editor AppDir/usr/bin/
+    
+    - name: Bundle Qt dependencies
+      working-directory: tools/raymap_editor
+      run: |
+        # Download linuxdeployqt
+        wget -q https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage
+        chmod +x linuxdeployqt-continuous-x86_64.AppImage
+        # Extract it
+        ./linuxdeployqt-continuous-x86_64.AppImage --appimage-extract
+        # Bundle Qt libraries
+        ./squashfs-root/AppRun AppDir/usr/bin/raymap_editor -bundle-non-qt-libs || true
+        # Copy Qt plugins manually
+        mkdir -p AppDir/usr/plugins
+        cp -r /usr/lib/x86_64-linux-gnu/qt6/plugins/platforms AppDir/usr/plugins/ || true
+        cp -r $(qmake6 -query QT_INSTALL_PLUGINS)/platforms AppDir/usr/plugins/ || true
+    
     - name: Package
       working-directory: tools/raymap_editor
       run: |
         mkdir -p raymap_editor-linux
-        cp build/raymap_editor raymap_editor-linux/
+        cp -r AppDir/usr/* raymap_editor-linux/
         cp README.md raymap_editor-linux/ || true
         cp USAGE.md raymap_editor-linux/ || true
+        # Create a launch script
+        cat > raymap_editor-linux/raymap_editor.sh << 'EOF'
+#!/bin/bash
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export LD_LIBRARY_PATH="$DIR/lib:$LD_LIBRARY_PATH"
+export QT_PLUGIN_PATH="$DIR/plugins"
+"$DIR/bin/raymap_editor" "$@"
+EOF
+        chmod +x raymap_editor-linux/raymap_editor.sh
         tar -czf raymap_editor-linux-x64.tar.gz raymap_editor-linux/
     
     - name: Upload artifact
@@ -86,6 +117,13 @@ jobs:
     - name: Setup MSVC
       uses: microsoft/setup-msbuild@v2
     
+    - name: Install vcpkg and zlib
+      run: |
+        git clone https://github.com/Microsoft/vcpkg.git C:\vcpkg
+        C:\vcpkg\bootstrap-vcpkg.bat
+        C:\vcpkg\vcpkg install zlib:x64-windows
+        echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+    
     - name: Clean build directory
       working-directory: tools/raymap_editor
       run: |
@@ -96,7 +134,8 @@ jobs:
       run: |
         cmake -B build `
           -DCMAKE_BUILD_TYPE=Release `
-          -DCMAKE_PREFIX_PATH="${env:Qt6_DIR}"
+          -DCMAKE_PREFIX_PATH="${env:Qt6_DIR}" `
+          -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake"
     
     - name: Build
       working-directory: tools/raymap_editor
@@ -107,7 +146,16 @@ jobs:
       run: |
         mkdir raymap_editor-windows
         Copy-Item build/Release/raymap_editor.exe raymap_editor-windows/
-        & "${env:Qt6_DIR}/bin/windeployqt.exe" raymap_editor-windows/raymap_editor.exe
+        # Deploy Qt dependencies with all necessary plugins
+        & "${env:Qt6_DIR}/bin/windeployqt.exe" `
+          --release `
+          --no-compiler-runtime `
+          --no-system-d3d-compiler `
+          --no-opengl-sw `
+          raymap_editor-windows/raymap_editor.exe
+        # Copy zlib DLL from vcpkg
+        Copy-Item "C:\vcpkg\installed\x64-windows\bin\zlib1.dll" raymap_editor-windows/ -ErrorAction SilentlyContinue
+        # Copy documentation
         Copy-Item README.md raymap_editor-windows/ -ErrorAction SilentlyContinue
         Copy-Item USAGE.md raymap_editor-windows/ -ErrorAction SilentlyContinue
     
@@ -151,10 +199,13 @@ jobs:
       working-directory: tools/raymap_editor
       run: cmake --build build --config Release -j$(sysctl -n hw.ncpu)
     
-    - name: Deploy Qt dependencies
+    - name: Deploy Qt dependencies and create DMG
       working-directory: tools/raymap_editor
       run: |
-        $(brew --prefix qt@6)/bin/macdeployqt build/raymap_editor.app -dmg
+        # Deploy Qt frameworks into the app bundle
+        $(brew --prefix qt@6)/bin/macdeployqt build/raymap_editor.app -verbose=2
+        # Verify the app bundle
+        otool -L build/raymap_editor.app/Contents/MacOS/raymap_editor
     
     - name: Package
       working-directory: tools/raymap_editor
@@ -163,27 +214,14 @@ jobs:
         cp -r build/raymap_editor.app raymap_editor-macos/
         cp README.md raymap_editor-macos/ || true
         cp USAGE.md raymap_editor-macos/ || true
-        # Create DMG if macdeployqt didn't create it
-        if [ -f build/raymap_editor.dmg ]; then
-          cp build/raymap_editor.dmg raymap_editor-macos-x64.dmg
-        else
-          tar -czf raymap_editor-macos-x64.tar.gz raymap_editor-macos/
-        fi
+        # Create DMG
+        hdiutil create -volname "Raymap Editor" -srcfolder raymap_editor-macos -ov -format UDZO raymap_editor-macos-x64.dmg
     
-    - name: Upload artifact (DMG)
-      if: hashFiles('tools/raymap_editor/raymap_editor-macos-x64.dmg') != ''
-      uses: actions/upload-artifact@v4
-      with:
-        name: raymap_editor-macos-x64-dmg
-        path: tools/raymap_editor/raymap_editor-macos-x64.dmg
-        retention-days: 30
-    
-    - name: Upload artifact (tar.gz)
-      if: hashFiles('tools/raymap_editor/raymap_editor-macos-x64.tar.gz') != ''
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: raymap_editor-macos-x64
-        path: tools/raymap_editor/raymap_editor-macos-x64.tar.gz
+        path: tools/raymap_editor/raymap_editor-macos-x64.dmg
         retention-days: 30
 
   create-release:
