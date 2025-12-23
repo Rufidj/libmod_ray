@@ -3,6 +3,7 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QDebug>
+#include <cmath>
 
 GridEditor::GridEditor(QWidget *parent)
     : QWidget(parent)
