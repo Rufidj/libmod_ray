@@ -249,6 +249,7 @@ typedef struct {
     /* Grids de suelo y techo - POR NIVEL (0, 1, 2) */
     int *floorGrids[3];                  /* Grids de suelo por nivel [level][x + y * width] */
     int *ceilingGrids[3];                /* Grids de techo por nivel [level][x + y * width] */
+    float *floorHeightGrids[3];          /* Grids de altura de suelo por nivel [level][x + y * width] */
     
     /* Puertas */
     RAY_Door *doors;                 /* Estado de puertas [x + y * width] */
@@ -364,6 +365,17 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
 float ray_screen_distance(float screenWidth, float fovRadians);
 float ray_strip_angle(float screenX, float screenDistance);
 float ray_strip_screen_height(float screenDistance, float correctDistance, float tileSize);
+
+/* ThinWalls Raycasting */
+void ray_find_intersecting_thin_walls(RAY_RayHit *hits, int *num_hits,
+                                      RAY_ThickWall **thickWalls, int num_thick_walls,
+                                      float playerX, float playerY,
+                                      float rayEndX, float rayEndY);
+void ray_raycast_thin_walls(RAY_RayHit *hits, int *num_hits,
+                            RAY_ThickWall **thickWalls, int num_thick_walls,
+                            float playerX, float playerY, float playerZ,
+                            float playerRot, float stripAngle, int stripIdx,
+                            int gridWidth, int tileSize);
 
 /* Shape */
 int ray_lines_intersect(float x1, float y1, float x2, float y2,

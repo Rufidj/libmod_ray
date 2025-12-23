@@ -397,19 +397,38 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
             }
         }
         
-        /* Saltar floor height grids si existen (3 niveles de floats) */
-        /* No los usamos por ahora, pero debemos saltarlos */
+        /* Leer floor height grids (3 niveles de floats) */
         current_pos = ftell(f);
         if (current_pos < file_size) {
             size_t float_grid_size = header.map_width * header.map_height * sizeof(float);
-            fseek(f, float_grid_size * 3, SEEK_CUR);
+            
+            g_engine.floorHeightGrids[0] = (float*)calloc(header.map_width * header.map_height, sizeof(float));
+            g_engine.floorHeightGrids[1] = (float*)calloc(header.map_width * header.map_height, sizeof(float));
+            g_engine.floorHeightGrids[2] = (float*)calloc(header.map_width * header.map_height, sizeof(float));
+            
+            if (g_engine.floorHeightGrids[0] && g_engine.floorHeightGrids[1] && g_engine.floorHeightGrids[2]) {
+                if (fread(g_engine.floorHeightGrids[0], float_grid_size, 1, f) == 1 &&
+                    fread(g_engine.floorHeightGrids[1], float_grid_size, 1, f) == 1 &&
+                    fread(g_engine.floorHeightGrids[2], float_grid_size, 1, f) == 1) {
+                    
+                    /* DEBUG: Verificar datos cargados */
+                    int non_zero_count = 0;
+                    for (int i = 0; i < (int)(header.map_width * header.map_height); i++) {
+                        if (g_engine.floorHeightGrids[0][i] != 0.0f) non_zero_count++;
+                    }
+                    printf("RAY: FloorHeight grid nivel 0 - %d celdas con altura != 0\\n", non_zero_count);
+                } else {
+                    fprintf(stderr, "RAY: Error leyendo floor height grids\\n");
+                }
+            }
         }
     } else {
         /* Si no hay datos de floor/ceiling, inicializar a ceros */
-        printf("RAY: No hay floor/ceiling data, inicializando a ceros\n");
+        printf("RAY: No hay floor/ceiling data, inicializando a ceros\\n");
         for (int level = 0; level < 3; level++) {
             g_engine.floorGrids[level] = (int*)calloc(header.map_width * header.map_height, sizeof(int));
             g_engine.ceilingGrids[level] = (int*)calloc(header.map_width * header.map_height, sizeof(int));
+            g_engine.floorHeightGrids[level] = (float*)calloc(header.map_width * header.map_height, sizeof(float));
         }
     }
     
@@ -550,6 +569,10 @@ int64_t libmod_ray_free_map(INSTANCE *my, int64_t *params) {
         if (g_engine.ceilingGrids[level]) {
             free(g_engine.ceilingGrids[level]);
             g_engine.ceilingGrids[level] = NULL;
+        }
+        if (g_engine.floorHeightGrids[level]) {
+            free(g_engine.floorHeightGrids[level]);
+            g_engine.floorHeightGrids[level] = NULL;
         }
     }
     

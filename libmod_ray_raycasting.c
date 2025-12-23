@@ -393,3 +393,151 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
     
     *num_hits = hit_count;
 }
+
+/* ============================================================================
+   THINWALLS RAYCASTING
+   ============================================================================ */
+
+/* Find all ThinWalls that intersect with the ray */
+void ray_find_intersecting_thin_walls(RAY_RayHit *hits, int *num_hits,
+                                      RAY_ThickWall **thickWalls, int num_thick_walls,
+                                      float playerX, float playerY,
+                                      float rayEndX, float rayEndY)
+{
+    int hit_count = *num_hits;
+    const int max_hits = RAY_MAX_RAYHITS;
+    
+    /* Iterar sobre todos los ThickWalls */
+    for (int tw_idx = 0; tw_idx < num_thick_walls; tw_idx++) {
+        RAY_ThickWall *thickWall = thickWalls[tw_idx];
+        if (!thickWall) continue;
+        
+        /* Iterar sobre todos los ThinWalls de este ThickWall */
+        for (int thin_idx = 0; thin_idx < thickWall->num_thin_walls; thin_idx++) {
+            RAY_ThinWall *thinWall = &thickWall->thinWalls[thin_idx];
+            if (thinWall->hidden) continue;
+            
+            float ix = 0, iy = 0;
+            int hitFound = ray_lines_intersect(thinWall->x1, thinWall->y1,
+                                               thinWall->x2, thinWall->y2,
+                                               playerX, playerY,
+                                               rayEndX, rayEndY,
+                                               &ix, &iy);
+            
+            if (hitFound && hit_count < max_hits) {
+                float distX = playerX - ix;
+                float distY = playerY - iy;
+                float squaredDistance = distX * distX + distY * distY;
+                float distance = sqrtf(squaredDistance);
+                
+                if (distance > 0.1f) {  /* Evitar hits muy cercanos al jugador */
+                    RAY_RayHit *rayHit = &hits[hit_count];
+                    rayHit->thinWall = thinWall;
+                    rayHit->x = ix;
+                    rayHit->y = iy;
+                    rayHit->squaredDistance = squaredDistance;
+                    rayHit->distance = distance;
+                    rayHit->sprite = NULL;
+                    rayHit->wallHeight = thinWall->height;
+                    rayHit->wallType = thinWall->wallType;
+                    rayHit->horizontal = thinWall->horizontal;
+                    rayHit->invertedZ = 0;
+                    rayHit->siblingWallHeight = 0;
+                    rayHit->siblingDistance = 0;
+                    rayHit->siblingCorrectDistance = 0;
+                    rayHit->siblingThinWallZ = 0;
+                    rayHit->siblingInvertedZ = 0;
+                    
+                    hit_count++;
+                }
+            }
+        }
+    }
+    
+    *num_hits = hit_count;
+}
+
+/* Raycast ThinWalls (slopes/ramps) */
+void ray_raycast_thin_walls(RAY_RayHit *hits, int *num_hits,
+                            RAY_ThickWall **thickWalls, int num_thick_walls,
+                            float playerX, float playerY, float playerZ,
+                            float playerRot, float stripAngle, int stripIdx,
+                            int gridWidth, int tileSize)
+{
+    if (num_thick_walls == 0) return;
+    
+    /* Calcular ángulo del rayo */
+    float rayAngle = stripAngle + playerRot;
+    while (rayAngle < 0) rayAngle += RAY_TWO_PI;
+    while (rayAngle >= RAY_TWO_PI) rayAngle -= RAY_TWO_PI;
+    
+    /* Determinar dirección */
+    int right = (rayAngle < RAY_TWO_PI * 0.25f && rayAngle >= 0) ||
+                (rayAngle > RAY_TWO_PI * 0.75f);
+    
+    /* Calcular punto final del rayo (en el borde del mapa) */
+    float vx = 0;
+    if (right) {
+        vx = gridWidth * tileSize;
+    } else {
+        vx = 0;
+    }
+    
+    float vy = playerY + (playerX - vx) * tanf(rayAngle);
+    
+    /* Encontrar ThinWalls que intersectan con este rayo */
+    int initial_hits = *num_hits;
+    ray_find_intersecting_thin_walls(hits, num_hits, thickWalls, num_thick_walls,
+                                     playerX, playerY, vx, vy);
+    
+    /* Procesar los nuevos hits */
+    for (int i = initial_hits; i < *num_hits; i++) {
+        RAY_RayHit *rayHit = &hits[i];
+        RAY_ThinWall *thinWall = rayHit->thinWall;
+        RAY_ThickWall *thickWall = thinWall->thickWall;
+        
+        rayHit->wallHeight = thinWall->height;
+        rayHit->strip = stripIdx;
+        
+        /* Calcular coordenada de textura basada en distancia al origen del ThinWall */
+        float dto = roundf(ray_thin_wall_distance_to_origin(thinWall, rayHit->x, rayHit->y));
+        rayHit->tileX = ((int)dto) % tileSize;
+        rayHit->horizontal = thinWall->horizontal;
+        rayHit->wallType = thinWall->wallType;
+        rayHit->rayAngle = rayAngle;
+        
+        if (rayHit->distance > 0) {
+            rayHit->correctDistance = rayHit->distance * cosf(playerRot - rayAngle);
+            
+            if (rayHit->correctDistance < 1.0f) {
+                /* Hit muy cercano, marcar como inválido */
+                rayHit->wallType = 0;
+                continue;
+            }
+            
+            /* Slope - calcular altura variable */
+            if (thinWall->slope != 0) {
+                rayHit->wallHeight = thickWall->startHeight + 
+                                    thinWall->slope * 
+                                    ray_thin_wall_distance_to_origin(thinWall, rayHit->x, rayHit->y);
+                
+                if (thickWall->invertedSlope) {
+                    rayHit->invertedZ = rayHit->wallHeight;
+                    rayHit->wallHeight = thickWall->tallerHeight - rayHit->wallHeight;
+                }
+            }
+        }
+    }
+    
+    /* Compactar array eliminando hits inválidos */
+    int write_idx = 0;
+    for (int read_idx = 0; read_idx < *num_hits; read_idx++) {
+        if (hits[read_idx].wallType != 0 || hits[read_idx].sprite != NULL) {
+            if (write_idx != read_idx) {
+                hits[write_idx] = hits[read_idx];
+            }
+            write_idx++;
+        }
+    }
+    *num_hits = write_idx;
+}

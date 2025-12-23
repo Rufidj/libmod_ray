@@ -301,17 +301,47 @@ static void ray_draw_wall_strip(GRAPH *dest, RAY_RayHit *rayHit,
     int screen_x = strip * strip_width;
     
     /* Calcular posición Y en pantalla */
-    int screen_y = (g_engine.displayHeight - wall_screen_height) / 2;
-    screen_y += (int)player_screen_z;
-    screen_y += (int)g_engine.camera.pitch;
+    /* Basado en stripScreenRect del código original */
+    int screen_y;
     
-    /* IMPORTANTE: Añadir offset de altura según el nivel */
-    /* Cada nivel está a RAY_TILE_SIZE de altura del anterior */
-    float level_z_offset = rayHit->level * RAY_TILE_SIZE;
-    float level_screen_offset = ray_strip_screen_height(g_engine.viewDist,
-                                                        rayHit->correctDistance,
-                                                        level_z_offset);
-    screen_y -= (int)level_screen_offset;
+    if (rayHit->thinWall) {
+        /* Para ThinWalls: calcular como si fuera una pared de tamaño completo, */
+        /* luego ajustar por la diferencia de altura */
+        float default_wall_screen_height = ray_strip_screen_height(g_engine.viewDist,
+                                                                    rayHit->correctDistance,
+                                                                    RAY_TILE_SIZE);
+        
+        /* Posición Y base (como si fuera una pared completa centrada) */
+        screen_y = (g_engine.displayHeight - (int)default_wall_screen_height) / 2;
+        
+        /* Ajustar por la diferencia entre altura completa y altura real */
+        /* Esto mueve la pared hacia abajo si es más baja que TILE_SIZE */
+        screen_y += ((int)default_wall_screen_height - wall_screen_height);
+        
+        /* Si el ThinWall no está en el suelo (z > 0), subir la pared */
+        if (rayHit->thinWall->z > 0) {
+            float z_screen_offset = ray_strip_screen_height(g_engine.viewDist,
+                                                            rayHit->correctDistance,
+                                                            rayHit->thinWall->z);
+            screen_y -= (int)z_screen_offset;
+        }
+        
+        /* Añadir offset del jugador y pitch */
+        screen_y += (int)player_screen_z;
+        screen_y += (int)g_engine.camera.pitch;
+    } else {
+        /* Para paredes normales: centrar verticalmente */
+        screen_y = (g_engine.displayHeight - wall_screen_height) / 2;
+        screen_y += (int)player_screen_z;
+        screen_y += (int)g_engine.camera.pitch;
+        
+        /* Añadir offset de altura según el nivel */
+        float level_z_offset = rayHit->level * RAY_TILE_SIZE;
+        float level_screen_offset = ray_strip_screen_height(g_engine.viewDist,
+                                                            rayHit->correctDistance,
+                                                            level_z_offset);
+        screen_y -= (int)level_screen_offset;
+    }
     
     /* Calcular coordenada de textura X */
     int texture_x = (int)rayHit->tileX;
@@ -831,6 +861,23 @@ void ray_render_frame(GRAPH *dest)
                              g_engine.sprites,
                              g_engine.num_sprites);
         
+        /* Raycast ThinWalls (slopes/ramps) */
+        extern RAY_Engine g_engine;
+        if (g_engine.num_thick_walls > 0) {
+            ray_raycast_thin_walls(&all_rayhits[strip * RAY_MAX_RAYHITS],
+                                  &num_hits,
+                                  g_engine.thickWalls,
+                                  g_engine.num_thick_walls,
+                                  g_engine.camera.x,
+                                  g_engine.camera.y,
+                                  g_engine.camera.z,
+                                  g_engine.camera.rot,
+                                  strip_angle,
+                                  strip,
+                                  g_engine.raycaster.gridWidth,
+                                  g_engine.raycaster.tileSize);
+        }
+        
         rayhit_counts[strip] = num_hits;
         
         // DEBUG: Verificar hits multinivel
@@ -928,10 +975,13 @@ void ray_render_frame(GRAPH *dest)
             }
         } else {
             // No hay puertas - buscar pared más cercana para clipear correctamente
+            // IGNORAR ThinWalls para que el suelo se vea debajo de rampas
             RAY_RayHit *closest_wall = NULL;
             for (int h = num_hits - 1; h >= 0; h--) {
-                closest_wall = &hits[h];
-                break;
+                if (!hits[h].thinWall) {  // NUEVO: Ignorar ThinWalls
+                    closest_wall = &hits[h];
+                    break;
+                }
             }
             
             if (closest_wall) {
@@ -945,7 +995,7 @@ void ray_render_frame(GRAPH *dest)
                                                           closest_wall->correctDistance,
                                                           g_engine.camera.z);
             } else {
-                // No hay hits - espacio abierto
+                // No hay hits de paredes normales - espacio abierto o solo ThinWalls
                 floor_hit.correctDistance = RAY_TILE_SIZE * 10.0f;
                 wall_screen_height = 0;
             }
@@ -1003,9 +1053,15 @@ void ray_render_frame(GRAPH *dest)
             
             
             // Calcular altura de pared en pantalla
+            // IMPORTANTE: Para ThinWalls (slopes), usar wallHeight que varía según la posición
+            float wall_height_to_use = RAY_TILE_SIZE;
+            if (rayHit->thinWall) {
+                wall_height_to_use = rayHit->wallHeight;
+            }
+            
             int wall_screen_height = (int)ray_strip_screen_height(g_engine.viewDist,
                                                                    rayHit->correctDistance,
-                                                                   RAY_TILE_SIZE);
+                                                                   wall_height_to_use);
             
             float player_screen_z = ray_strip_screen_height(g_engine.viewDist,
                                                            rayHit->correctDistance,
