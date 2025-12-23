@@ -1,9 +1,0 @@
-/home/ruben/BennuGD2/modules/libmod_ray/tools/raymap_editor/build/Desktop-Debug/CMakeFiles/raymap_editor.dir
-/home/ruben/BennuGD2/modules/libmod_ray/tools/raymap_editor/build/Desktop-Debug/CMakeFiles/edit_cache.dir
-/home/ruben/BennuGD2/modules/libmod_ray/tools/raymap_editor/build/Desktop-Debug/CMakeFiles/rebuild_cache.dir
-/home/ruben/BennuGD2/modules/libmod_ray/tools/raymap_editor/build/Desktop-Debug/CMakeFiles/list_install_components.dir
-/home/ruben/BennuGD2/modules/libmod_ray/tools/raymap_editor/build/Desktop-Debug/CMakeFiles/install.dir
-/home/ruben/BennuGD2/modules/libmod_ray/tools/raymap_editor/build/Desktop-Debug/CMakeFiles/install/local.dir
-/home/ruben/BennuGD2/modules/libmod_ray/tools/raymap_editor/build/Desktop-Debug/CMakeFiles/install/strip.dir
-/home/ruben/BennuGD2/modules/libmod_ray/tools/raymap_editor/build/Desktop-Debug/CMakeFiles/raymap_editor_autogen_timestamp_deps.dir
-/home/ruben/BennuGD2/modules/libmod_ray/tools/raymap_editor/build/Desktop-Debug/CMakeFiles/raymap_editor_autogen.dir
