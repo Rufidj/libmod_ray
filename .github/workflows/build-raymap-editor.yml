@@ -81,12 +81,12 @@ jobs:
         cp USAGE.md raymap_editor-linux/ || true
         # Create a launch script
         cat > raymap_editor-linux/raymap_editor.sh << 'EOF'
-#!/bin/bash
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export LD_LIBRARY_PATH="$DIR/lib:$LD_LIBRARY_PATH"
-export QT_PLUGIN_PATH="$DIR/plugins"
-"$DIR/bin/raymap_editor" "$@"
-EOF
+        #!/bin/bash
+        DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        export LD_LIBRARY_PATH="$DIR/lib:$LD_LIBRARY_PATH"
+        export QT_PLUGIN_PATH="$DIR/plugins"
+        "$DIR/bin/raymap_editor" "$@"
+        EOF
         chmod +x raymap_editor-linux/raymap_editor.sh
         tar -czf raymap_editor-linux-x64.tar.gz raymap_editor-linux/
     
