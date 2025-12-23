@@ -10,6 +10,12 @@ Módulo de raycasting 3D para BennuGD2 con soporte para múltiples niveles, spri
 
 ![Captura 3](screenshots/captura3.png)
 
+![Captura 4](screenshots/captura4.png)
+
+![Captura 5](screenshots/captura5.png)
+
+
+
 ## Características
 
 - **Renderizado 3D**: Motor de raycasting optimizado
