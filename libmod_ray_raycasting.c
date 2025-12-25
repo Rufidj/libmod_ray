@@ -516,15 +516,69 @@ void ray_raycast_thin_walls(RAY_RayHit *hits, int *num_hits,
             }
             
             /* Slope - calcular altura variable */
+            static int slope_check_debug = 0;
+            if (slope_check_debug < 5 && thickWall && thickWall->slope != 0) {
+                printf("SLOPE_CHECK: thinWall->slope=%.3f thickWall->slope=%.3f ptr=%p\n",
+                       thinWall->slope, thickWall->slope, (void*)thinWall);
+                slope_check_debug++;
+            }
+            
             if (thinWall->slope != 0) {
-                rayHit->wallHeight = thickWall->startHeight + 
-                                    thinWall->slope * 
-                                    ray_thin_wall_distance_to_origin(thinWall, rayHit->x, rayHit->y);
+                float dto = ray_thin_wall_distance_to_origin(thinWall, rayHit->x, rayHit->y);
+                rayHit->wallHeight = thickWall->startHeight + thinWall->slope * dto;
+                
+                static int slope_calc_debug = 0;
+                if (slope_calc_debug < 5) {
+                    printf("SLOPE_CALC: startHeight=%.1f slope=%.3f dto=%.1f -> wallHeight=%.1f\n",
+                           thickWall->startHeight, thinWall->slope, dto, rayHit->wallHeight);
+                    printf("            thinWall: (%.1f,%.1f)-(%.1f,%.1f) hit: (%.1f,%.1f)\n",
+                           thinWall->x1, thinWall->y1, thinWall->x2, thinWall->y2,
+                           rayHit->x, rayHit->y);
+                    slope_calc_debug++;
+                }
                 
                 if (thickWall->invertedSlope) {
                     rayHit->invertedZ = rayHit->wallHeight;
                     rayHit->wallHeight = thickWall->tallerHeight - rayHit->wallHeight;
                 }
+            }
+        }
+    }
+    
+    /* ========================================
+       SIBLING SYSTEM - Find opposite wall for slopes
+       Port of raycasting.cpp lines 1101-1111
+       ======================================== */
+    for (int i = initial_hits; i < *num_hits; i++) {
+        RAY_RayHit *rayHit = &hits[i];
+        RAY_ThinWall *thinWall = rayHit->thinWall;
+        if (!thinWall) continue;
+        
+        RAY_ThickWall *thickWall = thinWall->thickWall;
+        if (!thickWall || thickWall->slope == 0) continue;
+        
+        /* Buscar siblings - otras paredes del mismo ThickWall */
+        for (int j = initial_hits; j < *num_hits; j++) {
+            if (i == j) continue;
+            
+            RAY_RayHit *otherHit = &hits[j];
+            if (!otherHit->thinWall) continue;
+            
+            /* Si ambos hits pertenecen al mismo ThickWall, son siblings */
+            if (otherHit->thinWall->thickWall == thickWall) {
+                /* Copy sibling data (port of RayHit::copySibling) */
+                rayHit->siblingWallHeight = otherHit->wallHeight;
+                rayHit->siblingDistance = otherHit->distance;
+                rayHit->siblingCorrectDistance = otherHit->correctDistance;
+                rayHit->siblingThinWallZ = otherHit->thinWall->z;
+                rayHit->siblingInvertedZ = otherHit->invertedZ;
+                
+                /* También copiar en la otra dirección */
+                otherHit->siblingWallHeight = rayHit->wallHeight;
+                otherHit->siblingDistance = rayHit->distance;
+                otherHit->siblingCorrectDistance = rayHit->correctDistance;
+                otherHit->siblingThinWallZ = rayHit->thinWall->z;
+                otherHit->siblingInvertedZ = rayHit->invertedZ;
             }
         }
     }
@@ -541,3 +595,120 @@ void ray_raycast_thin_walls(RAY_RayHit *hits, int *num_hits,
     }
     *num_hits = write_idx;
 }
+
+/* ============================================================================
+   FIND SIBLING AT ANGLE
+   Exact 1:1 port of RayHit::findSiblingAtAngle() from raycasting.cpp lines 48-111
+   ============================================================================ */
+int ray_find_sibling_at_angle(RAY_RayHit *rayHit, float originAngle, float playerRot,
+                               float playerX, float playerY,
+                               int gridWidth, int tileSize)
+{
+    if (!rayHit->thinWall || !rayHit->thinWall->thickWall) {
+        return 0;
+    }
+    
+    RAY_ThickWall *thickWall = rayHit->thinWall->thickWall;
+    static int debug_find = 0;
+    if (debug_find < 3) {
+        printf("FIND_SIBLING: Searching... originAngle=%.3f ThickWall has %d ThinWalls\n", originAngle, thickWall->num_thin_walls);
+        debug_find++;
+    }
+    
+    float rayAngle = originAngle; /* Note: we don't add player angle */
+    while (rayAngle < 0) rayAngle += RAY_TWO_PI;
+    while (rayAngle >= RAY_TWO_PI) rayAngle -= RAY_TWO_PI;
+    
+    int right = (rayAngle < RAY_TWO_PI * 0.25f && rayAngle >= 0) ||  /* Quadrant 1 */
+                (rayAngle > RAY_TWO_PI * 0.75f);                      /* Quadrant 4 */
+    
+    float vx = 0;
+    if (right) {
+        vx = gridWidth * tileSize;
+    } else {
+        vx = 0;
+    }
+    
+    float vy = playerY + (playerX - vx) * tanf(rayAngle);
+    
+    /* Para ThickWalls rectangulares (4 ThinWalls), encontrar el opuesto correcto:
+       [0]=west ↔ [1]=east
+       [2]=north ↔ [3]=south */
+    int currentIndex = -1;
+    for (int i = 0; i < thickWall->num_thin_walls; i++) {
+        if (&thickWall->thinWalls[i] == rayHit->thinWall) {
+            currentIndex = i;
+            break;
+        }
+    }
+    
+    if (currentIndex == -1) {
+        if (debug_find < 3) {
+            printf("  ERROR: Current ThinWall not found in ThickWall!\n");
+            debug_find++;
+        }
+        return 0;
+    }
+    
+    /* Determinar el índice del sibling opuesto */
+    int siblingIndex = -1;
+    if (thickWall->num_thin_walls == 4) {
+        /* Rectangular: 0↔1, 2↔3 */
+        if (currentIndex == 0) siblingIndex = 1;
+        else if (currentIndex == 1) siblingIndex = 0;
+        else if (currentIndex == 2) siblingIndex = 3;
+        else if (currentIndex == 3) siblingIndex = 2;
+    }
+    
+    if (siblingIndex == -1 || siblingIndex >= thickWall->num_thin_walls) {
+        if (debug_find < 3) {
+            printf("  No opposite sibling for ThinWall[%d]\n", currentIndex);
+            debug_find++;
+        }
+        return 0;
+    }
+    
+    RAY_ThinWall *siblingThinWall = &thickWall->thinWalls[siblingIndex];
+    
+    if (debug_find < 3) {
+        printf("  Using opposite sibling: ThinWall[%d] -> ThinWall[%d]\n", 
+               currentIndex, siblingIndex);
+        debug_find++;
+    }
+    
+    /* Calcular intersección con el sibling */
+    float x = 0, y = 0;
+    if (ray_lines_intersect(siblingThinWall->x1, siblingThinWall->y1,
+                           siblingThinWall->x2, siblingThinWall->y2,
+                           playerX, playerY,
+                           vx, vy, &x, &y))
+    {
+        float distX = playerX - x;
+        float distY = playerY - y;
+        float squaredDistance = distX * distX + distY * distY;
+        float distance = sqrtf(squaredDistance);
+        
+        rayHit->siblingDistance = distance;
+        rayHit->siblingThinWallZ = siblingThinWall->z;
+        rayHit->siblingWallHeight = siblingThinWall->height;
+        
+        if (distance > 0) {
+            rayHit->siblingCorrectDistance = distance * cosf(playerRot - rayAngle);
+        }
+        
+        /* Slope */
+        if (siblingThinWall->slope != 0) {
+            rayHit->siblingWallHeight = thickWall->startHeight +
+                                      siblingThinWall->slope *
+                                      ray_thin_wall_distance_to_origin(siblingThinWall, x, y);
+            if (thickWall->invertedSlope) {
+                rayHit->siblingInvertedZ = rayHit->siblingWallHeight;
+                rayHit->siblingWallHeight = thickWall->tallerHeight - rayHit->siblingWallHeight;
+            }
+        }
+        return 1;
+    }
+    
+    return 0;
+}
+

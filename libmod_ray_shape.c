@@ -342,26 +342,76 @@ int ray_thick_wall_contains_point(RAY_ThickWall *tw, float px, float py)
     return 0;
 }
 
-/* TODO: Implementar slopes (createRectSlope, createRectInvertedSlope) */
+/* Exact 1:1 port of ThickWall::createRectSlope() from raycasting.cpp lines 205-230 */
 void ray_thick_wall_create_rect_slope(RAY_ThickWall *tw, int slopeType,
                                       float x, float y, float w, float h, float z,
                                       float startHeight, float endHeight)
 {
-    /* Implementación completa pendiente - por ahora crear rect normal */
-    ray_thick_wall_create_rect(tw, x, y, w, h, z, endHeight);
     tw->slopeType = slopeType;
     tw->startHeight = startHeight;
     tw->endHeight = endHeight;
+    tw->tallerHeight = startHeight > endHeight ? startHeight : endHeight;
+    
+    if (RAY_SLOPE_TYPE_WEST_EAST == slopeType) {
+        ray_thick_wall_create_rect(tw, x, y, w, h, z, endHeight);
+        tw->slope = (endHeight - startHeight) / w;
+        tw->thinWalls[0].height = startHeight;  /* west */
+        tw->thinWalls[1].height = endHeight;    /* east */
+        tw->thinWalls[2].slope  = tw->slope;    /* north - SLOPE SURFACE */
+        tw->thinWalls[3].slope  = tw->slope;    /* south - SLOPE SURFACE */
+    }
+    else if (RAY_SLOPE_TYPE_NORTH_SOUTH == slopeType) {
+        ray_thick_wall_create_rect(tw, x, y, w, h, z, endHeight);
+        tw->slope = (endHeight - startHeight) / h;
+        tw->thinWalls[0].slope  = tw->slope;    /* west  - SLOPE SURFACE */
+        tw->thinWalls[1].slope  = tw->slope;    /* east  - SLOPE SURFACE */
+        tw->thinWalls[2].height = startHeight;  /* north */
+        tw->thinWalls[3].height = endHeight;    /* south */
+    }
+    ray_thick_wall_set_z(tw, z);
 }
 
+/* Exact 1:1 port of ThickWall::createRectInvertedSlope() from raycasting.cpp lines 232-275 */
 void ray_thick_wall_create_rect_inverted_slope(RAY_ThickWall *tw, int slopeType,
                                                float x, float y, float w, float h, float z,
                                                float startHeight, float endHeight)
 {
-    /* Implementación completa pendiente - por ahora crear rect normal */
-    ray_thick_wall_create_rect(tw, x, y, w, h, z, endHeight);
+    tw->invertedSlope = 1;
     tw->slopeType = slopeType;
     tw->startHeight = startHeight;
     tw->endHeight = endHeight;
-    tw->invertedSlope = 1;
+    
+    tw->tallerHeight = startHeight > endHeight ? startHeight : endHeight;
+    
+    float newStartHeight = (tw->tallerHeight - startHeight);
+    float newEndHeight   = (tw->tallerHeight - endHeight);
+    if (newStartHeight == 0) {
+        newStartHeight = 1;
+    }
+    if (newEndHeight == 0) {
+        newEndHeight = 1;
+    }
+    
+    if (RAY_SLOPE_TYPE_WEST_EAST == slopeType) {
+        ray_thick_wall_create_rect(tw, x, y, w, h, z, endHeight);
+        tw->slope = (endHeight - startHeight) / w;
+        tw->thinWalls[0].height = newStartHeight;  /* west */
+        tw->thinWalls[1].height = newEndHeight;    /* east */
+        tw->thinWalls[2].slope  = tw->slope;       /* north */
+        tw->thinWalls[3].slope  = tw->slope;       /* south */
+        ray_thick_wall_set_z(tw, z);
+        tw->thinWalls[0].z = z + startHeight;      /* Z offset for inverted */
+        tw->thinWalls[1].z = z + endHeight;
+    }
+    else if (RAY_SLOPE_TYPE_NORTH_SOUTH == slopeType) {
+        ray_thick_wall_create_rect(tw, x, y, w, h, z, endHeight);
+        tw->slope = (endHeight - startHeight) / h;
+        tw->thinWalls[0].slope  = tw->slope;       /* west */
+        tw->thinWalls[1].slope  = tw->slope;       /* east */
+        tw->thinWalls[2].height = newStartHeight;  /* north */
+        tw->thinWalls[3].height = newEndHeight;    /* south */
+        ray_thick_wall_set_z(tw, z);
+        tw->thinWalls[2].z = z + startHeight;      /* Z offset for inverted */
+        tw->thinWalls[3].z = z + endHeight;
+    }
 }

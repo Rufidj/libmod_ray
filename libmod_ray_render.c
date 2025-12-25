@@ -287,6 +287,326 @@ static uint32_t ray_sample_texture(GRAPH *texture, int tex_x, int tex_y)
 
 
 /* ============================================================================
+   SLOPE RENDERING
+   Port from main.cpp: Game::drawSlope and Game::drawSlopeInverted
+   ============================================================================ */
+
+static SDL_Rect ray_strip_screen_rect(float viewDist, RAY_RayHit *rayHit, float wallHeight)
+{
+    SDL_Rect rect;
+    rect.x = 0; // Not used for height calc
+    
+    // Height of 1 tile
+    float defaultWallScreenHeight = ray_strip_screen_height(viewDist, rayHit->correctDistance, RAY_TILE_SIZE);
+    
+    // Height of the wall
+    float wallScreenHeight = (wallHeight == RAY_TILE_SIZE) 
+        ? defaultWallScreenHeight
+        : ray_strip_screen_height(viewDist, rayHit->correctDistance, wallHeight);
+        
+    // Clamp height
+    const float MAX_HEIGHT = 32000.0f; // Safe limit
+    if (defaultWallScreenHeight > MAX_HEIGHT) defaultWallScreenHeight = MAX_HEIGHT;
+    if (wallScreenHeight > MAX_HEIGHT) wallScreenHeight = MAX_HEIGHT;
+    
+    rect.h = (int)wallScreenHeight;
+    
+    return rect;
+}
+
+static int ray_draw_slope(GRAPH *dest, RAY_RayHit *rayHit, float playerScreenZ)
+{
+    RAY_RayHit sibling = {0};
+    
+    // We should already have found the sibling with ray_raycast_thin_walls()
+    // No sibling found yet means the player is directly above/below the slope.
+    if (rayHit->siblingDistance == 0) {
+        if (!ray_find_sibling_at_angle(rayHit, rayHit->rayAngle - M_PI, g_engine.camera.rot,
+                                     g_engine.camera.x, g_engine.camera.y,
+                                     g_engine.raycaster.gridWidth, RAY_TILE_SIZE)) {
+            return 0; // no sibling found
+        }
+    }
+    
+    // Only draw slope if current wall is further than sibling wall
+    if (rayHit->siblingDistance == 0 ||
+        rayHit->correctDistance < rayHit->siblingCorrectDistance) {
+        return 0;
+    }
+    
+    // Cross section values of current strip
+    float farWallX = rayHit->correctDistance;
+    float farWallY = rayHit->thinWall->z + rayHit->wallHeight;
+    float nearWallX = rayHit->siblingCorrectDistance;
+    float nearWallY = rayHit->siblingThinWallZ + rayHit->siblingWallHeight;
+    float eyeX = 0; // relative to player eye, so always 0
+    float eyeY = RAY_TILE_SIZE/2.0f + g_engine.camera.z;
+    
+    float centerPlane = dest->height / 2.0f;
+    float cosFactor = 1.0f / cosf(g_engine.camera.rot - rayHit->rayAngle);
+    int screenX = rayHit->strip * g_engine.stripWidth;
+    int wasInWall = 0;
+    
+    float defaultWallScreenHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, RAY_TILE_SIZE);
+    float wallScreenHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, rayHit->wallHeight);
+    float zHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, rayHit->thinWall->z);
+    
+    float startY = ((dest->height - defaultWallScreenHeight) / 2.0f);
+    if (rayHit->wallHeight != RAY_TILE_SIZE) {
+        startY += (defaultWallScreenHeight - wallScreenHeight);
+    }
+    if (rayHit->thinWall->z != 0) {
+        startY -= zHeight;
+    }
+    
+    int screenY = (int)(startY + playerScreenZ);
+    int pitch = (int)g_engine.camera.pitch;
+    
+    // Raycast vertically from top to bottom to find slope intersection
+    for (; screenY < dest->height - pitch; screenY++) {
+        float wallTop = 0;
+        int hitSlope = 0;
+        
+        // Angle is below eye
+        float divisor = screenY - centerPlane;
+        
+        if (screenY >= centerPlane) {
+            float dy = screenY - centerPlane;
+            if (dy == 0) {
+                dy = screenY + 1 - centerPlane;
+                divisor = screenY + 1 - centerPlane;
+            }
+            float angle = atanf(dy / g_engine.viewDist);
+            float tanAngle = tanf(angle);
+            if (tanAngle == 0) tanAngle = 0.0001f;
+            
+            float floorX = eyeY / tanAngle;
+            float floorY = 0; // should always be 0
+            
+            float hitX, hitY;
+            hitSlope = ray_lines_intersect(eyeX, eyeY, floorX, floorY,
+                                         farWallX, farWallY, nearWallX, nearWallY,
+                                         &hitX, &hitY);
+            if (hitSlope) {
+                wallTop = hitY;
+            }
+        }
+        // Angle is above eye
+        else {
+            float dy = centerPlane - screenY;
+            float angle = atanf(dy / g_engine.viewDist);
+            float tanAngle = tanf(angle);
+            if (tanAngle == 0) tanAngle = 0.0001f;
+            
+            float ceilingY = RAY_TILE_SIZE * 99.0f; // imaginary high ceiling
+            float ceilingX = ceilingY / tanAngle;
+            
+            float hitX, hitY;
+            hitSlope = ray_lines_intersect(eyeX, eyeY, ceilingX, ceilingY,
+                                         farWallX, farWallY, nearWallX, nearWallY,
+                                         &hitX, &hitY);
+            if (hitSlope) {
+                wallTop = hitY;
+            }
+        }
+        
+        if (!hitSlope) {
+            if (wasInWall) {
+                return 1;
+            }
+            continue;
+        }
+        
+        if (divisor == 0) divisor = 1.0f;
+        float ratio = (eyeY - wallTop) / divisor;
+        float straightDistance = g_engine.viewDist * ratio;
+        float diagonalDistance = straightDistance * cosFactor;
+        
+        float xEnd = (diagonalDistance * cosf(rayHit->rayAngle));
+        float yEnd = (diagonalDistance * -sinf(rayHit->rayAngle));
+        
+        if (isinf(xEnd) || isinf(yEnd)) {
+             if (wasInWall) return 1;
+             continue;
+        }
+        
+        xEnd += g_engine.camera.x;
+        yEnd += g_engine.camera.y;
+        
+        int x = ((int)xEnd) % RAY_TILE_SIZE;
+        int y = ((int)yEnd) % RAY_TILE_SIZE;
+        if (x < 0) x += RAY_TILE_SIZE;
+        if (y < 0) y += RAY_TILE_SIZE;
+        
+        int textureID = rayHit->thinWall->thickWall->floorTextureID;
+        // Check bounds (simplified)
+        if (textureID <= 0) {
+             if (wasInWall) return 1;
+             continue;
+        }
+        
+        GRAPH *texture = bitmap_get(g_engine.fpg_id, textureID);
+        if (!texture) continue;
+        
+        int texX = (int)((float)x / RAY_TILE_SIZE * texture->width);
+        int texY = (int)((float)y / RAY_TILE_SIZE * texture->height);
+        
+        // Safety clamp
+        if (texX < 0) texX = 0; if (texX >= texture->width) texX = texture->width - 1;
+        if (texY < 0) texY = 0; if (texY >= texture->height) texY = texture->height - 1;
+        
+        uint32_t pixel = ray_sample_texture(texture, texX, texY);
+        
+        // Draw pixel(s) based on strip width
+        int drawY = screenY + pitch;
+        if (drawY >= 0 && drawY < dest->height) {
+            wasInWall = 1;
+            for (int w = 0; w < g_engine.stripWidth; w++) {
+                int drawX = screenX + w;
+                if (drawX >= 0 && drawX < dest->width) {
+                    gr_put_pixel(dest, drawX, drawY, pixel);
+                }
+            }
+        }
+    }
+    return 1;
+}
+
+static int ray_draw_slope_inverted(GRAPH *dest, RAY_RayHit *rayHit, float playerScreenZ)
+{
+    RAY_RayHit sibling = {0};
+    
+    if (rayHit->siblingDistance == 0) {
+        if (!ray_find_sibling_at_angle(rayHit, rayHit->rayAngle - M_PI, g_engine.camera.rot,
+                                     g_engine.camera.x, g_engine.camera.y,
+                                     g_engine.raycaster.gridWidth, RAY_TILE_SIZE)) {
+            return 0;
+        }
+    }
+    
+    if (rayHit->siblingDistance == 0 ||
+        rayHit->correctDistance < rayHit->siblingCorrectDistance) {
+        return 0;
+    }
+    
+    float farWallX = rayHit->correctDistance;
+    float farWallY = rayHit->thinWall->z + rayHit->invertedZ;
+    float nearWallX = rayHit->siblingCorrectDistance;
+    float nearWallY = rayHit->siblingThinWallZ + rayHit->siblingInvertedZ;
+    float eyeX = 0;
+    float eyeY = RAY_TILE_SIZE/2.0f + g_engine.camera.z;
+    
+    float centerPlane = dest->height / 2.0f;
+    float cosFactor = 1.0f / cosf(g_engine.camera.rot - rayHit->rayAngle);
+    int screenX = rayHit->strip * g_engine.stripWidth;
+    int wasInWall = 0;
+    
+    float defaultWallScreenHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, RAY_TILE_SIZE);
+    float wallScreenHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, rayHit->wallHeight);
+    float zHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, rayHit->thinWall->z);
+    
+    float startY = ((dest->height - defaultWallScreenHeight) / 2.0f);
+    if (rayHit->wallHeight != RAY_TILE_SIZE) {
+        startY += (defaultWallScreenHeight - wallScreenHeight);
+    }
+    if (rayHit->thinWall->z != 0) {
+        startY -= zHeight;
+    }
+    
+    int screenY = (int)(startY + wallScreenHeight + playerScreenZ);
+    int pitch = (int)g_engine.camera.pitch;
+    
+    for (; screenY >= 0 - pitch; screenY--) {
+        float wallTop = 0;
+        int hitSlope = 0;
+        
+        float divisor = screenY - centerPlane;
+        
+        if (screenY >= centerPlane) {
+             float dy = screenY - centerPlane;
+             if (dy == 0) { dy = screenY + 1 - centerPlane; divisor = screenY + 1 - centerPlane; }
+             float angle = atanf(dy / g_engine.viewDist);
+             float tanAngle = tanf(angle);
+             if (tanAngle == 0) tanAngle = 0.0001f;
+             
+             float floorX = eyeY / tanAngle;
+             float floorY = 0;
+             float hitX, hitY;
+             hitSlope = ray_lines_intersect(eyeX, eyeY, floorX, floorY,
+                                          farWallX, farWallY, nearWallX, nearWallY, &hitX, &hitY);
+             if (hitSlope) wallTop = hitY;
+        } else {
+             float dy = centerPlane - screenY;
+             float angle = atanf(dy / g_engine.viewDist);
+             float tanAngle = tanf(angle);
+             if (tanAngle == 0) tanAngle = 0.0001f;
+             
+             float ceilingY = RAY_TILE_SIZE * 99.0f;
+             float ceilingX = ceilingY / tanAngle;
+             float hitX, hitY;
+             hitSlope = ray_lines_intersect(eyeX, eyeY, ceilingX, ceilingY,
+                                          farWallX, farWallY, nearWallX, nearWallY, &hitX, &hitY);
+             if (hitSlope) wallTop = hitY;
+        }
+        
+        if (!hitSlope) {
+             if (wasInWall) return 1;
+             continue;
+        }
+        
+        if (divisor == 0) divisor = 1.0f;
+        float ratio = (eyeY - wallTop) / divisor;
+        float straightDistance = g_engine.viewDist * ratio;
+        float diagonalDistance = straightDistance * cosFactor;
+        
+        float xEnd = (diagonalDistance * cosf(rayHit->rayAngle));
+        float yEnd = (diagonalDistance * -sinf(rayHit->rayAngle));
+        
+        if (isinf(xEnd) || isinf(yEnd)) {
+             if (wasInWall) return 1;
+             continue;
+        }
+        
+        xEnd += g_engine.camera.x;
+        yEnd += g_engine.camera.y;
+        
+        int x = ((int)xEnd) % RAY_TILE_SIZE;
+        int y = ((int)yEnd) % RAY_TILE_SIZE;
+        if (x < 0) x += RAY_TILE_SIZE;
+        if (y < 0) y += RAY_TILE_SIZE;
+        
+        int textureID = rayHit->thinWall->thickWall->ceilingTextureID;
+        if (textureID <= 0) {
+             if (wasInWall) return 1;
+             continue;
+        }
+        
+        GRAPH *texture = bitmap_get(g_engine.fpg_id, textureID);
+        if (!texture) continue;
+        
+        int texX = (int)((float)x / RAY_TILE_SIZE * texture->width);
+        int texY = (int)((float)y / RAY_TILE_SIZE * texture->height);
+        
+        if (texX < 0) texX = 0; if (texX >= texture->width) texX = texture->width - 1;
+        if (texY < 0) texY = 0; if (texY >= texture->height) texY = texture->height - 1;
+        
+        uint32_t pixel = ray_sample_texture(texture, texX, texY);
+        
+        int drawY = screenY + pitch;
+        if (drawY >= 0 && drawY < dest->height) {
+            wasInWall = 1;
+            for (int w = 0; w < g_engine.stripWidth; w++) {
+                 int drawX = screenX + w;
+                 if (drawX >= 0 && drawX < dest->width) {
+                     gr_put_pixel(dest, drawX, drawY, pixel);
+                 }
+            }
+        }
+    }
+    return 1;
+}
+
+/* ============================================================================
    WALL RENDERING
    ============================================================================ */
 
@@ -1183,6 +1503,17 @@ void ray_render_frame(GRAPH *dest)
                 
                 ray_draw_wall_strip(dest, rayHit, wall_screen_height, player_screen_z,
                                    wall_texture, rayHit->horizontal);
+                
+                /* Slope Rendering */
+                if (rayHit->thinWall && rayHit->thinWall->thickWall && 
+                    rayHit->thinWall->thickWall->slope != 0.0f) {
+                    
+                    if (rayHit->thinWall->thickWall->invertedSlope) {
+                        ray_draw_slope_inverted(dest, rayHit, player_screen_z);
+                    } else {
+                        ray_draw_slope(dest, rayHit, player_screen_z);
+                    }
+                }
             }
             
             skip_wall_render:;

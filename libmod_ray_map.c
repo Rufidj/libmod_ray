@@ -332,6 +332,17 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
             tw->num_thin_walls++;
         }
         
+        /* DEBUG: Print loaded slope values */
+        if (tw->slope != 0) {
+            printf("MOTOR LOAD: ThickWall loaded with slope = %.3f\n", tw->slope);
+            printf("  ThinWalls loaded:\n");
+            for (int t = 0; t < tw->num_thin_walls; t++) {
+                printf("    [%d] slope=%.3f height=%.1f hidden=%d ptr=%p\n",
+                       t, tw->thinWalls[t].slope, tw->thinWalls[t].height, 
+                       tw->thinWalls[t].hidden, (void*)&tw->thinWalls[t]);
+            }
+        }
+        
         g_engine.thickWalls[g_engine.num_thick_walls++] = tw;
     }
     

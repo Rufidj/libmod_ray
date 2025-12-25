@@ -376,6 +376,9 @@ void ray_raycast_thin_walls(RAY_RayHit *hits, int *num_hits,
                             float playerX, float playerY, float playerZ,
                             float playerRot, float stripAngle, int stripIdx,
                             int gridWidth, int tileSize);
+int ray_find_sibling_at_angle(RAY_RayHit *rayHit, float originAngle, float playerRot,
+                               float playerX, float playerY,
+                               int gridWidth, int tileSize);
 
 /* Shape */
 int ray_lines_intersect(float x1, float y1, float x2, float y2,
