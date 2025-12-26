@@ -81,7 +81,7 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
     }
     
     /* Verificar versión */
-    if (header.version < 1 || header.version > 4) {
+    if (header.version < 1 || header.version > 6) {
         fprintf(stderr, "RAY: Versión de mapa no soportada: %u\n", header.version);
         fclose(f);
         return 0;
@@ -199,6 +199,70 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
         printf("RAY: Grid nivel %d - %d celdas con paredes\n", level, non_zero_count);
     }
     
+    /* Leer Height Grids (v5+) */
+    if (header.version >= 5) {
+        printf("RAY: Leyendo wall height grids (versión %d)...\n", header.version);
+        size_t grid_size = header.map_width * header.map_height * sizeof(float);
+        for (uint32_t level = 0; level < header.num_levels; level++) {
+             if (g_engine.raycaster.heightGrids && g_engine.raycaster.heightGrids[level]) {
+                 if (fread(g_engine.raycaster.heightGrids[level], grid_size, 1, f) != 1) {
+                     fprintf(stderr, "RAY: Error reading height grid level %d\n", level);
+                 } else {
+                     // DEBUG: Verificar datos cargados y mostrar valores no-default
+                     int non_default_count = 0;
+                     printf("RAY: Height grid nivel %d - Valores no-default:\n", level);
+                     for (int i = 0; i < (int)(header.map_width * header.map_height); i++) {
+                         float h = g_engine.raycaster.heightGrids[level][i];
+                         if (h != 128.0f && h != 0.0f) {
+                             int x = i % header.map_width;
+                             int y = i / header.map_width;
+                             printf("  [%d,%d] = %.1f\n", x, y, h);
+                             non_default_count++;
+                             if (non_default_count >= 10) break; // Limitar output
+                         }
+                     }
+                     printf("RAY: Total celdas con altura != 128/0: %d\n", non_default_count);
+                 }
+             } else {
+                 fseek(f, grid_size, SEEK_CUR);
+             }
+        }
+    } else {
+        /* Inicializar alturas por defecto para mapas antiguos */
+        for (uint32_t level = 0; level < header.num_levels; level++) {
+            if (g_engine.raycaster.heightGrids && g_engine.raycaster.heightGrids[level]) {
+                for (int i = 0; i < (int)(header.map_width * header.map_height); i++) {
+                    g_engine.raycaster.heightGrids[level][i] = (float)RAY_TILE_SIZE;
+                }
+            }
+        }
+    }
+
+    /* Leer Z-Offset Grids (v6+) */
+    if (header.version >= 6) {
+        printf("RAY: Leyendo wall Z-offset grids (versión %d)...\n", header.version);
+        size_t grid_size = header.map_width * header.map_height * sizeof(float);
+        for (uint32_t level = 0; level < header.num_levels; level++) {
+             if (g_engine.raycaster.zOffsetGrids && g_engine.raycaster.zOffsetGrids[level]) {
+                 if (fread(g_engine.raycaster.zOffsetGrids[level], grid_size, 1, f) != 1) {
+                     fprintf(stderr, "RAY: Error reading Z-offset grid level %d\n", level);
+                 }
+             } else {
+                 fseek(f, grid_size, SEEK_CUR);
+             }
+        }
+    } else {
+        /* Inicializar a 0.0 para mapas antiguos */
+        for (uint32_t level = 0; level < header.num_levels; level++) {
+            if (g_engine.raycaster.zOffsetGrids && g_engine.raycaster.zOffsetGrids[level]) {
+                for (int i = 0; i < (int)(header.map_width * header.map_height); i++) {
+                    g_engine.raycaster.zOffsetGrids[level][i] = 0.0f;
+                }
+            }
+        }
+    }
+
+
     /* Leer sprites */
     g_engine.num_sprites = 0;
     for (uint32_t i = 0; i < header.num_sprites && i < RAY_MAX_SPRITES; i++) {
@@ -243,6 +307,7 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
     }
     
     /* Leer ThickWalls */
+    printf("DEBUG: Starting ThickWalls at pos %ld\n", ftell(f));
     g_engine.num_thick_walls = 0;
     for (uint32_t i = 0; i < header.num_thick_walls && i < RAY_MAX_THICK_WALLS; i++) {
         RAY_ThickWall *tw = (RAY_ThickWall*)malloc(sizeof(RAY_ThickWall));
@@ -250,10 +315,18 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
         
         ray_thick_wall_init(tw);
         
+        long pos_before = ftell(f);
+        printf("DEBUG: Reading ThickWall %d at pos %ld\n", i, pos_before);
+
         /* Leer campos básicos - IMPORTANTE: el editor escribe 'slope' ANTES de x,y,w,h */
         if (fread(&tw->type, sizeof(int), 1, f) != 1 ||
-            fread(&tw->slopeType, sizeof(int), 1, f) != 1 ||
-            fread(&tw->slope, sizeof(float), 1, f) != 1 ||
+            fread(&tw->slopeType, sizeof(int), 1, f) != 1) {
+             // Error handling
+        }
+        
+        printf("DEBUG: ThickWall %d Type=%d SlopeType=%d\n", i, tw->type, tw->slopeType);
+        
+        if (fread(&tw->slope, sizeof(float), 1, f) != 1 ||
             fread(&tw->x, sizeof(float), 1, f) != 1 ||
             fread(&tw->y, sizeof(float), 1, f) != 1 ||
             fread(&tw->w, sizeof(float), 1, f) != 1 ||
@@ -305,10 +378,20 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
             fclose(f);
             return 0;
         }
+
+        printf("DEBUG: ThickWall %d: num_thin_walls=%d\n", i, num_thin_walls);
         
         tw->num_thin_walls = 0;
         tw->thin_walls_capacity = num_thin_walls;
-        tw->thinWalls = (RAY_ThinWall*)malloc(num_thin_walls * sizeof(RAY_ThinWall));
+        
+        if (num_thin_walls > 0) {
+             tw->thinWalls = (RAY_ThinWall*)malloc(num_thin_walls * sizeof(RAY_ThinWall));
+             if (!tw->thinWalls) {
+                 printf("CRITICAL ERROR: Failed to allocate thinWalls! Size=%d\n", num_thin_walls);
+             }
+        } else {
+             tw->thinWalls = NULL;
+        }
         
         for (int t = 0; t < num_thin_walls; t++) {
             RAY_ThinWall *thin = &tw->thinWalls[t];
@@ -351,6 +434,9 @@ int ray_load_map_from_file(const char *filename, int fpg_id)
     fseek(f, 0, SEEK_END);
     long file_size = ftell(f);
     fseek(f, current_pos, SEEK_SET);
+    
+    printf("DEBUG: Antes de floor grids - pos=%ld, file_size=%ld, quedan=%ld bytes\n", 
+           current_pos, file_size, file_size - current_pos);
     
     if (current_pos < file_size) {
         printf("RAY: Leyendo floor/ceiling grids...\n");

@@ -314,390 +314,80 @@ static SDL_Rect ray_strip_screen_rect(float viewDist, RAY_RayHit *rayHit, float 
     return rect;
 }
 
-static int ray_draw_slope(GRAPH *dest, RAY_RayHit *rayHit, float playerScreenZ)
-{
-    RAY_RayHit sibling = {0};
-    
-    // We should already have found the sibling with ray_raycast_thin_walls()
-    // No sibling found yet means the player is directly above/below the slope.
-    if (rayHit->siblingDistance == 0) {
-        if (!ray_find_sibling_at_angle(rayHit, rayHit->rayAngle - M_PI, g_engine.camera.rot,
-                                     g_engine.camera.x, g_engine.camera.y,
-                                     g_engine.raycaster.gridWidth, RAY_TILE_SIZE)) {
-            return 0; // no sibling found
-        }
-    }
-    
-    // Only draw slope if current wall is further than sibling wall
-    if (rayHit->siblingDistance == 0 ||
-        rayHit->correctDistance < rayHit->siblingCorrectDistance) {
-        return 0;
-    }
-    
-    // Cross section values of current strip
-    float farWallX = rayHit->correctDistance;
-    float farWallY = rayHit->thinWall->z + rayHit->wallHeight;
-    float nearWallX = rayHit->siblingCorrectDistance;
-    float nearWallY = rayHit->siblingThinWallZ + rayHit->siblingWallHeight;
-    float eyeX = 0; // relative to player eye, so always 0
-    float eyeY = RAY_TILE_SIZE/2.0f + g_engine.camera.z;
-    
-    float centerPlane = dest->height / 2.0f;
-    float cosFactor = 1.0f / cosf(g_engine.camera.rot - rayHit->rayAngle);
-    int screenX = rayHit->strip * g_engine.stripWidth;
-    int wasInWall = 0;
-    
-    float defaultWallScreenHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, RAY_TILE_SIZE);
-    float wallScreenHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, rayHit->wallHeight);
-    float zHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, rayHit->thinWall->z);
-    
-    float startY = ((dest->height - defaultWallScreenHeight) / 2.0f);
-    if (rayHit->wallHeight != RAY_TILE_SIZE) {
-        startY += (defaultWallScreenHeight - wallScreenHeight);
-    }
-    if (rayHit->thinWall->z != 0) {
-        startY -= zHeight;
-    }
-    
-    int screenY = (int)(startY + playerScreenZ);
-    int pitch = (int)g_engine.camera.pitch;
-    
-    // Raycast vertically from top to bottom to find slope intersection
-    for (; screenY < dest->height - pitch; screenY++) {
-        float wallTop = 0;
-        int hitSlope = 0;
-        
-        // Angle is below eye
-        float divisor = screenY - centerPlane;
-        
-        if (screenY >= centerPlane) {
-            float dy = screenY - centerPlane;
-            if (dy == 0) {
-                dy = screenY + 1 - centerPlane;
-                divisor = screenY + 1 - centerPlane;
-            }
-            float angle = atanf(dy / g_engine.viewDist);
-            float tanAngle = tanf(angle);
-            if (tanAngle == 0) tanAngle = 0.0001f;
-            
-            float floorX = eyeY / tanAngle;
-            float floorY = 0; // should always be 0
-            
-            float hitX, hitY;
-            hitSlope = ray_lines_intersect(eyeX, eyeY, floorX, floorY,
-                                         farWallX, farWallY, nearWallX, nearWallY,
-                                         &hitX, &hitY);
-            if (hitSlope) {
-                wallTop = hitY;
-            }
-        }
-        // Angle is above eye
-        else {
-            float dy = centerPlane - screenY;
-            float angle = atanf(dy / g_engine.viewDist);
-            float tanAngle = tanf(angle);
-            if (tanAngle == 0) tanAngle = 0.0001f;
-            
-            float ceilingY = RAY_TILE_SIZE * 99.0f; // imaginary high ceiling
-            float ceilingX = ceilingY / tanAngle;
-            
-            float hitX, hitY;
-            hitSlope = ray_lines_intersect(eyeX, eyeY, ceilingX, ceilingY,
-                                         farWallX, farWallY, nearWallX, nearWallY,
-                                         &hitX, &hitY);
-            if (hitSlope) {
-                wallTop = hitY;
-            }
-        }
-        
-        if (!hitSlope) {
-            if (wasInWall) {
-                return 1;
-            }
-            continue;
-        }
-        
-        if (divisor == 0) divisor = 1.0f;
-        float ratio = (eyeY - wallTop) / divisor;
-        float straightDistance = g_engine.viewDist * ratio;
-        float diagonalDistance = straightDistance * cosFactor;
-        
-        float xEnd = (diagonalDistance * cosf(rayHit->rayAngle));
-        float yEnd = (diagonalDistance * -sinf(rayHit->rayAngle));
-        
-        if (isinf(xEnd) || isinf(yEnd)) {
-             if (wasInWall) return 1;
-             continue;
-        }
-        
-        xEnd += g_engine.camera.x;
-        yEnd += g_engine.camera.y;
-        
-        int x = ((int)xEnd) % RAY_TILE_SIZE;
-        int y = ((int)yEnd) % RAY_TILE_SIZE;
-        if (x < 0) x += RAY_TILE_SIZE;
-        if (y < 0) y += RAY_TILE_SIZE;
-        
-        int textureID = rayHit->thinWall->thickWall->floorTextureID;
-        // Check bounds (simplified)
-        if (textureID <= 0) {
-             if (wasInWall) return 1;
-             continue;
-        }
-        
-        GRAPH *texture = bitmap_get(g_engine.fpg_id, textureID);
-        if (!texture) continue;
-        
-        int texX = (int)((float)x / RAY_TILE_SIZE * texture->width);
-        int texY = (int)((float)y / RAY_TILE_SIZE * texture->height);
-        
-        // Safety clamp
-        if (texX < 0) texX = 0; if (texX >= texture->width) texX = texture->width - 1;
-        if (texY < 0) texY = 0; if (texY >= texture->height) texY = texture->height - 1;
-        
-        uint32_t pixel = ray_sample_texture(texture, texX, texY);
-        
-        // Draw pixel(s) based on strip width
-        int drawY = screenY + pitch;
-        if (drawY >= 0 && drawY < dest->height) {
-            wasInWall = 1;
-            for (int w = 0; w < g_engine.stripWidth; w++) {
-                int drawX = screenX + w;
-                if (drawX >= 0 && drawX < dest->width) {
-                    gr_put_pixel(dest, drawX, drawY, pixel);
-                }
-            }
-        }
-    }
-    return 1;
-}
-
-static int ray_draw_slope_inverted(GRAPH *dest, RAY_RayHit *rayHit, float playerScreenZ)
-{
-    RAY_RayHit sibling = {0};
-    
-    if (rayHit->siblingDistance == 0) {
-        if (!ray_find_sibling_at_angle(rayHit, rayHit->rayAngle - M_PI, g_engine.camera.rot,
-                                     g_engine.camera.x, g_engine.camera.y,
-                                     g_engine.raycaster.gridWidth, RAY_TILE_SIZE)) {
-            return 0;
-        }
-    }
-    
-    if (rayHit->siblingDistance == 0 ||
-        rayHit->correctDistance < rayHit->siblingCorrectDistance) {
-        return 0;
-    }
-    
-    float farWallX = rayHit->correctDistance;
-    float farWallY = rayHit->thinWall->z + rayHit->invertedZ;
-    float nearWallX = rayHit->siblingCorrectDistance;
-    float nearWallY = rayHit->siblingThinWallZ + rayHit->siblingInvertedZ;
-    float eyeX = 0;
-    float eyeY = RAY_TILE_SIZE/2.0f + g_engine.camera.z;
-    
-    float centerPlane = dest->height / 2.0f;
-    float cosFactor = 1.0f / cosf(g_engine.camera.rot - rayHit->rayAngle);
-    int screenX = rayHit->strip * g_engine.stripWidth;
-    int wasInWall = 0;
-    
-    float defaultWallScreenHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, RAY_TILE_SIZE);
-    float wallScreenHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, rayHit->wallHeight);
-    float zHeight = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, rayHit->thinWall->z);
-    
-    float startY = ((dest->height - defaultWallScreenHeight) / 2.0f);
-    if (rayHit->wallHeight != RAY_TILE_SIZE) {
-        startY += (defaultWallScreenHeight - wallScreenHeight);
-    }
-    if (rayHit->thinWall->z != 0) {
-        startY -= zHeight;
-    }
-    
-    int screenY = (int)(startY + wallScreenHeight + playerScreenZ);
-    int pitch = (int)g_engine.camera.pitch;
-    
-    for (; screenY >= 0 - pitch; screenY--) {
-        float wallTop = 0;
-        int hitSlope = 0;
-        
-        float divisor = screenY - centerPlane;
-        
-        if (screenY >= centerPlane) {
-             float dy = screenY - centerPlane;
-             if (dy == 0) { dy = screenY + 1 - centerPlane; divisor = screenY + 1 - centerPlane; }
-             float angle = atanf(dy / g_engine.viewDist);
-             float tanAngle = tanf(angle);
-             if (tanAngle == 0) tanAngle = 0.0001f;
-             
-             float floorX = eyeY / tanAngle;
-             float floorY = 0;
-             float hitX, hitY;
-             hitSlope = ray_lines_intersect(eyeX, eyeY, floorX, floorY,
-                                          farWallX, farWallY, nearWallX, nearWallY, &hitX, &hitY);
-             if (hitSlope) wallTop = hitY;
-        } else {
-             float dy = centerPlane - screenY;
-             float angle = atanf(dy / g_engine.viewDist);
-             float tanAngle = tanf(angle);
-             if (tanAngle == 0) tanAngle = 0.0001f;
-             
-             float ceilingY = RAY_TILE_SIZE * 99.0f;
-             float ceilingX = ceilingY / tanAngle;
-             float hitX, hitY;
-             hitSlope = ray_lines_intersect(eyeX, eyeY, ceilingX, ceilingY,
-                                          farWallX, farWallY, nearWallX, nearWallY, &hitX, &hitY);
-             if (hitSlope) wallTop = hitY;
-        }
-        
-        if (!hitSlope) {
-             if (wasInWall) return 1;
-             continue;
-        }
-        
-        if (divisor == 0) divisor = 1.0f;
-        float ratio = (eyeY - wallTop) / divisor;
-        float straightDistance = g_engine.viewDist * ratio;
-        float diagonalDistance = straightDistance * cosFactor;
-        
-        float xEnd = (diagonalDistance * cosf(rayHit->rayAngle));
-        float yEnd = (diagonalDistance * -sinf(rayHit->rayAngle));
-        
-        if (isinf(xEnd) || isinf(yEnd)) {
-             if (wasInWall) return 1;
-             continue;
-        }
-        
-        xEnd += g_engine.camera.x;
-        yEnd += g_engine.camera.y;
-        
-        int x = ((int)xEnd) % RAY_TILE_SIZE;
-        int y = ((int)yEnd) % RAY_TILE_SIZE;
-        if (x < 0) x += RAY_TILE_SIZE;
-        if (y < 0) y += RAY_TILE_SIZE;
-        
-        int textureID = rayHit->thinWall->thickWall->ceilingTextureID;
-        if (textureID <= 0) {
-             if (wasInWall) return 1;
-             continue;
-        }
-        
-        GRAPH *texture = bitmap_get(g_engine.fpg_id, textureID);
-        if (!texture) continue;
-        
-        int texX = (int)((float)x / RAY_TILE_SIZE * texture->width);
-        int texY = (int)((float)y / RAY_TILE_SIZE * texture->height);
-        
-        if (texX < 0) texX = 0; if (texX >= texture->width) texX = texture->width - 1;
-        if (texY < 0) texY = 0; if (texY >= texture->height) texY = texture->height - 1;
-        
-        uint32_t pixel = ray_sample_texture(texture, texX, texY);
-        
-        int drawY = screenY + pitch;
-        if (drawY >= 0 && drawY < dest->height) {
-            wasInWall = 1;
-            for (int w = 0; w < g_engine.stripWidth; w++) {
-                 int drawX = screenX + w;
-                 if (drawX >= 0 && drawX < dest->width) {
-                     gr_put_pixel(dest, drawX, drawY, pixel);
-                 }
-            }
-        }
-    }
-    return 1;
-}
-
-/* ============================================================================
-   WALL RENDERING
-   ============================================================================ */
+/* Slope drawing functions removed - slopes no longer supported */
 
 static void ray_draw_wall_strip(GRAPH *dest, RAY_RayHit *rayHit, 
                                 int wall_screen_height, float player_screen_z,
-                                GRAPH *texture, int texture_dark)
+                                GRAPH *wall_texture, int horizontal)
 {
-    if (!dest || !rayHit || !texture) return;
+    int default_wall_screen_height = ray_strip_screen_height(g_engine.viewDist, 
+                                                             rayHit->correctDistance, 
+                                                             RAY_TILE_SIZE);
     
-    int strip = rayHit->strip;
-    int strip_width = g_engine.stripWidth;
-    int screen_x = strip * strip_width;
-    
-    /* Calcular posición Y en pantalla */
-    /* Basado en stripScreenRect del código original */
     int screen_y;
-    
     if (rayHit->thinWall) {
-        /* Para ThinWalls: calcular como si fuera una pared de tamaño completo, */
-        /* luego ajustar por la diferencia de altura */
-        float default_wall_screen_height = ray_strip_screen_height(g_engine.viewDist,
-                                                                    rayHit->correctDistance,
-                                                                    RAY_TILE_SIZE);
-        
-        /* Posición Y base (como si fuera una pared completa centrada) */
         screen_y = (g_engine.displayHeight - (int)default_wall_screen_height) / 2;
         
-        /* Ajustar por la diferencia entre altura completa y altura real */
-        /* Esto mueve la pared hacia abajo si es más baja que TILE_SIZE */
-        screen_y += ((int)default_wall_screen_height - wall_screen_height);
-        
-        /* Si el ThinWall no está en el suelo (z > 0), subir la pared */
-        if (rayHit->thinWall->z > 0) {
-            float z_screen_offset = ray_strip_screen_height(g_engine.viewDist,
-                                                            rayHit->correctDistance,
-                                                            rayHit->thinWall->z);
-            screen_y -= (int)z_screen_offset;
+        if (rayHit->wallHeight != RAY_TILE_SIZE) {
+            screen_y += ((int)default_wall_screen_height - wall_screen_height);
         }
         
-        /* Añadir offset del jugador y pitch */
+        if (rayHit->thinWall->z > 0) {
+            int z_screen_height = ray_strip_screen_height(g_engine.viewDist,
+                                                         rayHit->correctDistance,
+                                                         rayHit->thinWall->z);
+            screen_y -= z_screen_height;
+        }
+        
         screen_y += (int)player_screen_z;
         screen_y += (int)g_engine.camera.pitch;
     } else {
-        /* Para paredes normales: centrar verticalmente */
-        screen_y = (g_engine.displayHeight - wall_screen_height) / 2;
-        screen_y += (int)player_screen_z;
-        screen_y += (int)g_engine.camera.pitch;
+        // IMPORTANTE: Calcular donde está el suelo usando altura de referencia (128px)
+        // Todas las paredes se anclan al mismo nivel de suelo
+        // Las paredes más altas crecen HACIA ARRIBA desde ese punto
+        int reference_wall_height = ray_strip_screen_height(g_engine.viewDist, 
+                                                            rayHit->correctDistance, 
+                                                            RAY_TILE_SIZE);
+        int floor_start_y = (g_engine.displayHeight - reference_wall_height) / 2 + reference_wall_height;
+        floor_start_y += (int)player_screen_z;
+        floor_start_y += (int)g_engine.camera.pitch;
         
-        /* Añadir offset de altura según el nivel */
-        float level_z_offset = rayHit->level * RAY_TILE_SIZE;
-        float level_screen_offset = ray_strip_screen_height(g_engine.viewDist,
-                                                            rayHit->correctDistance,
-                                                            level_z_offset);
-        screen_y -= (int)level_screen_offset;
+        // La pared termina en floor_start_y, así que empieza en floor_start_y - wall_screen_height
+        screen_y = floor_start_y - wall_screen_height;
     }
     
-    /* Calcular coordenada de textura X */
+    static int coord_debug = 0;
+    if (coord_debug < 3) {
+        int reference_wall_height = ray_strip_screen_height(g_engine.viewDist, rayHit->correctDistance, RAY_TILE_SIZE);
+        int floor_start_y = (g_engine.displayHeight - reference_wall_height) / 2 + reference_wall_height + (int)player_screen_z + (int)g_engine.camera.pitch;
+        printf("COORD_DEBUG: wall_h=%d, ref_h=%d, screen_y=%d, floor_start_y=%d\n",
+               wall_screen_height, reference_wall_height, screen_y, floor_start_y);
+        coord_debug++;
+    }
+    
+    int screen_x = rayHit->strip * g_engine.stripWidth;
+    
     int texture_x = (int)rayHit->tileX;
     if (texture_x < 0) texture_x = 0;
     if (texture_x >= RAY_TEXTURE_SIZE) texture_x = RAY_TEXTURE_SIZE - 1;
     
-    /* Renderizar columna de pared */
-    /* Calcular límite superior para no sobrescribir el techo */
-    int ceiling_end_y = (g_engine.displayHeight - wall_screen_height) / 2 + (int)player_screen_z;
-    
     for (int y = 0; y < wall_screen_height; y++) {
-        int dst_y = screen_y + y;
-        
-        /* COMENTADO: Este check bloqueaba paredes de niveles superiores
-         * Las paredes del nivel 1+ están más arriba (dst_y menor) y este check las saltaba
-         * if (dst_y < ceiling_end_y) continue;
-         */
-        
-        if (dst_y < 0 || dst_y >= g_engine.displayHeight) continue;
-        
-        /* Calcular coordenada de textura Y */
         float texture_y_f = ((float)y / wall_screen_height) * RAY_TEXTURE_SIZE;
+        
         int texture_y = (int)texture_y_f;
+        if (texture_y < 0) texture_y = 0;
         if (texture_y >= RAY_TEXTURE_SIZE) texture_y = RAY_TEXTURE_SIZE - 1;
         
-        /* Obtener pixel de textura */
-        uint32_t pixel = ray_sample_texture(texture, texture_x, texture_y);
+        uint32_t pixel = ray_sample_texture(wall_texture, texture_x, texture_y);
         
-        /* Aplicar fog si está activado */
-        if (g_engine.fogOn) {
-            pixel = ray_fog_pixel(pixel, rayHit->distance);
-        }
-        
-        /* Dibujar pixel(s) según stripWidth */
-        for (int sx = 0; sx < strip_width && screen_x + sx < g_engine.displayWidth; sx++) {
-            gr_put_pixel(dest, screen_x + sx, dst_y, pixel);
+        int draw_y = screen_y + y;
+        if (draw_y >= 0 && draw_y < dest->height) {
+            for (int w = 0; w < g_engine.stripWidth; w++) {
+                int draw_x = screen_x + w;
+                if (draw_x >= 0 && draw_x < dest->width) {
+                    gr_put_pixel(dest, draw_x, draw_y, pixel);
+                }
+            }
         }
     }
 }
@@ -789,6 +479,14 @@ static void ray_draw_floor_ceiling_strip(GRAPH *dest, RAY_RayHit *rayHit,
             
             /* Obtener tipo de tile de suelo del nivel actual */
             int floor_tile_type = g_engine.floorGrids[camera_level][tile_x + tile_y * g_engine.raycaster.gridWidth];
+            
+            // DEBUG: Verificar por qué no se renderiza el suelo
+            static int floor_debug = 0;
+            if (floor_debug < 5 && floor_tile_type > 0) {
+                printf("FLOOR_DEBUG: tile_type=%d, tile_pos=(%d,%d), screen_y=%d, floor_start_y=%d\n",
+                       floor_tile_type, tile_x, tile_y, screen_y, floor_start_y);
+                floor_debug++;
+            }
             
             if (floor_tile_type <= 0) continue;
             
@@ -1062,474 +760,490 @@ static void ray_draw_sprites(GRAPH *dest, float *z_buffer)
    MAIN RENDER FUNCTION
    ============================================================================ */
 
-void ray_render_frame(GRAPH *dest)
-{
-    if (!dest) {
-        return;
-    }
-    
-    if (!g_engine.initialized) {
-        return;
-    }
-    
-    if (!g_engine.raycaster.grids) {
-        return;
-    }
-    
-    if (g_engine.rayCount <= 0) {
-        fprintf(stderr, "RAY_RENDER: Invalid rayCount: %d\n", g_engine.rayCount);
-        return;
-    }
-    
-    /* Actualizar física y animaciones (asumiendo ~60 FPS) */
-    ray_update_physics(1.0f / 60.0f);
-    
-    /* Limpiar buffer con color de cielo (como en OLD) */
-    uint32_t sky_color = 0x87CEEB; /* Sky blue: RGB(135, 206, 235) */
-    gr_clear_as(dest, sky_color);
-    
-    /* Renderizar cielo - skybox o color sólido */
-    if (g_engine.skyTextureID > 0) {
-        /* Renderizar skybox texture */
-        GRAPH *sky_texture = bitmap_get(g_engine.fpg_id, g_engine.skyTextureID);
-        if (sky_texture) {
-            /* Skybox panorámico simple
-             * La textura representa 360° horizontalmente
-             * Mapear la rotación de la cámara + FOV a la textura */
-            
-            int sky_height = dest->height / 2;
-            
-            for (int x = 0; x < dest->width; x++) {
-                /* Calcular el ángulo para este pixel de pantalla
-                 * Basado en FOV y posición en pantalla */
-                float fov_rad = g_engine.fovRadians;
-                float screen_angle = ((float)x / dest->width - 0.5f) * fov_rad;
-                float total_angle = g_engine.camera.rot + screen_angle;
-                
-                /* Normalizar a [0, 2π] */
-                total_angle = fmodf(total_angle, 2.0f * M_PI);
-                if (total_angle < 0) total_angle += 2.0f * M_PI;
-                
-                /* Mapear a coordenada X de textura (0 a width-1) */
-                int tex_x = (int)((total_angle / (2.0f * M_PI)) * sky_texture->width);
-                if (tex_x >= sky_texture->width) tex_x = sky_texture->width - 1;
-                if (tex_x < 0) tex_x = 0;
-                
-                /* Dibujar columna vertical */
-                for (int y = 0; y < sky_height; y++) {
-                    /* Mapear Y de pantalla a Y de textura */
-                    int tex_y = (y * sky_texture->height) / sky_height;
-                    if (tex_y >= sky_texture->height) tex_y = sky_texture->height - 1;
-                    
-                    uint32_t pixel = ray_sample_texture(sky_texture, tex_x, tex_y);
-                    gr_put_pixel(dest, x, y, pixel);
-                }
-            }
-        } else {
-            /* Si no se encuentra la textura, usar color sólido */
-            uint32_t sky_color = 0x87CEEB;
-            gr_clear_as(dest, sky_color);
-        }
-    } else {
-        /* Color sólido azul cielo */
-        uint32_t sky_color = 0x87CEEB; /* Sky blue: RGB(135, 206, 235) */
-        gr_clear_as(dest, sky_color);
-    }
-    
-    /* Crear buffer de rayhits */
-    RAY_RayHit *all_rayhits = (RAY_RayHit*)malloc(g_engine.rayCount * RAY_MAX_RAYHITS * sizeof(RAY_RayHit));
-    int *rayhit_counts = (int*)calloc(g_engine.rayCount, sizeof(int));
-    float *z_buffer = (float*)malloc(g_engine.rayCount * sizeof(float));
-    
-    if (!all_rayhits || !rayhit_counts || !z_buffer) {
-        fprintf(stderr, "RAY_RENDER: Error allocating buffers\n");
-        if (all_rayhits) free(all_rayhits);
-        if (rayhit_counts) free(rayhit_counts);
-        if (z_buffer) free(z_buffer);
-        return;
-    }
-    
-    /* Buffers allocated */
-    
-    // Inicializar z-buffer
-    for (int i = 0; i < g_engine.rayCount; i++) {
-        z_buffer[i] = FLT_MAX;
-    }
-    
-    // Resetear rayhit flags de sprites
-    for (int i = 0; i < g_engine.num_sprites; i++) {
-        g_engine.sprites[i].rayhit = 0;
-    }
-    
-    // ========================================
-    // RAYCAST PHASE
-    // ========================================
-    
-    for (int strip = 0; strip < g_engine.rayCount; strip++) {
-        float strip_angle = g_engine.stripAngles[strip];
-        int num_hits = 0;
-        
-        ray_raycaster_raycast(&g_engine.raycaster,
-                             &all_rayhits[strip * RAY_MAX_RAYHITS],
-                             &num_hits,
-                             (int)g_engine.camera.x,
-                             (int)g_engine.camera.y,
-                             g_engine.camera.z,
-                             g_engine.camera.rot,
-                             strip_angle,
-                             strip,
-                             g_engine.sprites,
-                             g_engine.num_sprites);
-        
-        /* Raycast ThinWalls (slopes/ramps) */
-        extern RAY_Engine g_engine;
-        if (g_engine.num_thick_walls > 0) {
-            ray_raycast_thin_walls(&all_rayhits[strip * RAY_MAX_RAYHITS],
-                                  &num_hits,
-                                  g_engine.thickWalls,
-                                  g_engine.num_thick_walls,
-                                  g_engine.camera.x,
-                                  g_engine.camera.y,
-                                  g_engine.camera.z,
-                                  g_engine.camera.rot,
-                                  strip_angle,
-                                  strip,
-                                  g_engine.raycaster.gridWidth,
-                                  g_engine.raycaster.tileSize);
-        }
-        
-        rayhit_counts[strip] = num_hits;
-        
-        // DEBUG: Verificar hits multinivel
-        static int debug_count = 0;
-        if (debug_count < 5 && num_hits > 0) {
-            printf("RAY_DEBUG: Strip %d tiene %d hits:\n", strip, num_hits);
-            for (int h = 0; h < num_hits; h++) {
-                RAY_RayHit *hit = &all_rayhits[strip * RAY_MAX_RAYHITS + h];
-                printf("  Hit %d: level=%d, wallType=%d, distance=%.2f\n", 
-                       h, hit->level, hit->wallType, hit->distance);
-            }
-            debug_count++;
-        }
-        
-        // Actualizar z-buffer con el hit más cercano
-        for (int h = 0; h < num_hits; h++) {
-            RAY_RayHit *hit = &all_rayhits[strip * RAY_MAX_RAYHITS + h];
-            if (hit->wallType > 0 && hit->distance < z_buffer[strip]) {
-                z_buffer[strip] = hit->distance;
-            }
-        }
-    }
-    
-    // ========================================
-    // RENDER PHASE
-    // ========================================
-    
-    // Renderizar paredes, suelos y techos
-    // ESTRATEGIA: Renderizar de atrás hacia adelante (farthest to nearest)
-    // Esto permite ver niveles superiores flotantes mientras evita duplicados
-    
-    for (int strip = 0; strip < g_engine.rayCount; strip++) {
-        int num_hits = rayhit_counts[strip];
-        
-        if (num_hits == 0) continue;
-        
-        /* Ordenar hits por distancia (más lejano primero) usando bubble sort simple */
-        RAY_RayHit *hits = &all_rayhits[strip * RAY_MAX_RAYHITS];
-        for (int i = 0; i < num_hits - 1; i++) {
-            for (int j = 0; j < num_hits - i - 1; j++) {
-                if (hits[j].distance < hits[j + 1].distance) {
-                    RAY_RayHit temp = hits[j];
-                    hits[j] = hits[j + 1];
-                    hits[j + 1] = temp;
-                }
-            }
-        }
-        
-    }
-    
-    /* Recolectar todos los hits de todos los strips */
-    int total_hits = 0;
-    for (int x = 0; x < g_engine.rayCount; x++) {
-        total_hits += rayhit_counts[x];
-    }
-    
-    /* Total hits calculated */
-    
-    // ========================================
-    // FLOOR AND CEILING RENDERING FIRST
-    // Renderizar ANTES de las paredes para que las paredes se dibujen encima
-    // ========================================
-    
-    for (int x = 0; x < g_engine.rayCount; x++) {
-        int num_hits = rayhit_counts[x];
-        RAY_RayHit *hits = &all_rayhits[x * RAY_MAX_RAYHITS];
-        
-        // Calcular parámetros de renderizado basados en el hit más cercano QUE NO SEA PUERTA
-        int wall_screen_height = 0;  // Por defecto 0 para que el suelo se vea completo
-        float player_screen_z = 0.0f;
-        
-        // Crear un rayHit para este strip
-        RAY_RayHit floor_hit;
-        floor_hit.strip = x;
-        floor_hit.rayAngle = g_engine.camera.rot + g_engine.stripAngles[x];
-        
-        // Buscar si hay puertas en este strip
-        int has_door = 0;
-        for (int h = 0; h < num_hits; h++) {
-            if (ray_is_door(hits[h].wallType)) {
-                has_door = 1;
-                break;
-            }
-        }
-        
-        // Si hay una puerta, SIEMPRE usar wall_height=0 para ver el suelo completo
-        if (has_door) {
-            floor_hit.correctDistance = RAY_TILE_SIZE * 10.0f;
-            wall_screen_height = 0;  // Ver suelo completo a través de puertas
-            
-            static int debug_floor = 0;
-            if (debug_floor < 3) {
-                printf("RAY_FLOOR: Strip %d tiene PUERTA - forzando wall_height=0 para ver suelo\n", x);
-                debug_floor++;
-            }
+void ray_render_frame(GRAPH *dest)  
+{  
+    if (!dest) {  
+        return;  
+    }  
+      
+    if (!g_engine.initialized) {  
+        return;  
+    }  
+      
+    if (!g_engine.raycaster.grids) {  
+        return;  
+    }  
+      
+    if (g_engine.rayCount <= 0) {  
+        fprintf(stderr, "RAY_RENDER: Invalid rayCount: %d\n", g_engine.rayCount);  
+        return;  
+    }  
+      
+    /* Actualizar física y animaciones (asumiendo ~60 FPS) */  
+    ray_update_physics(1.0f / 60.0f);  
+      
+    /* Limpiar buffer con color de cielo (como en OLD) */  
+    uint32_t sky_color = 0x87CEEB; /* Sky blue: RGB(135, 206, 235) */  
+    gr_clear_as(dest, sky_color);  
+      
+    /* Renderizar cielo - skybox o color sólido */  
+    if (g_engine.skyTextureID > 0) {  
+        /* Renderizar skybox texture */  
+        GRAPH *sky_texture = bitmap_get(g_engine.fpg_id, g_engine.skyTextureID);  
+        if (sky_texture) {  
+            /* Skybox panorámico simple  
+             * La textura representa 360° horizontalmente  
+             * Mapear la rotación de la cámara + FOV a la textura */  
+              
+            int sky_height = dest->height / 2;  
+              
+            for (int x = 0; x < dest->width; x++) {  
+                /* Calcular el ángulo para este pixel de pantalla  
+                 * Basado en FOV y posición en pantalla */  
+                float fov_rad = g_engine.fovRadians;  
+                float screen_angle = ((float)x / dest->width - 0.5f) * fov_rad;  
+                float total_angle = g_engine.camera.rot + screen_angle;  
+                  
+                /* Normalizar a [0, 2π] */  
+                total_angle = fmodf(total_angle, 2.0f * M_PI);  
+                if (total_angle < 0) total_angle += 2.0f * M_PI;  
+                  
+                /* Mapear a coordenada X de textura (0 a width-1) */  
+                int tex_x = (int)((total_angle / (2.0f * M_PI)) * sky_texture->width);  
+                if (tex_x >= sky_texture->width) tex_x = sky_texture->width - 1;  
+                if (tex_x < 0) tex_x = 0;  
+                  
+                /* Dibujar columna vertical */  
+                for (int y = 0; y < sky_height; y++) {  
+                    /* Mapear Y de pantalla a Y de textura */  
+                    int tex_y = (y * sky_texture->height) / sky_height;  
+                    if (tex_y >= sky_texture->height) tex_y = sky_texture->height - 1;  
+                      
+                    uint32_t pixel = ray_sample_texture(sky_texture, tex_x, tex_y);  
+                    gr_put_pixel(dest, x, y, pixel);  
+                }  
+            }  
+        } else {  
+            /* Si no se encuentra la textura, usar color sólido */  
+            uint32_t sky_color = 0x87CEEB;  
+            gr_clear_as(dest, sky_color);  
+        }  
+    } else {  
+        /* Color sólido azul cielo */  
+        uint32_t sky_color = 0x87CEEB; /* Sky blue: RGB(135, 206, 235) */  
+        gr_clear_as(dest, sky_color);  
+    }  
+      
+    /* Crear buffer de rayhits */  
+    RAY_RayHit *all_rayhits = (RAY_RayHit*)malloc(g_engine.rayCount * RAY_MAX_RAYHITS * sizeof(RAY_RayHit));  
+    int *rayhit_counts = (int*)calloc(g_engine.rayCount, sizeof(int));  
+    float *z_buffer = (float*)malloc(g_engine.rayCount * sizeof(float));  
+      
+    if (!all_rayhits || !rayhit_counts || !z_buffer) {  
+        fprintf(stderr, "RAY_RENDER: Error allocating buffers\n");  
+        if (all_rayhits) free(all_rayhits);  
+        if (rayhit_counts) free(rayhit_counts);  
+        if (z_buffer) free(z_buffer);  
+        return;  
+    }  
+      
+    /* Buffers allocated */  
+      
+    // Inicializar z-buffer  
+    for (int i = 0; i < g_engine.rayCount; i++) {  
+        z_buffer[i] = FLT_MAX;  
+    }  
+      
+    // Resetear rayhit flags de sprites  
+    for (int i = 0; i < g_engine.num_sprites; i++) {  
+        g_engine.sprites[i].rayhit = 0;  
+    }  
+      
+    // ========================================  
+    // RAYCAST PHASE  
+    // ========================================  
+      
+    for (int strip = 0; strip < g_engine.rayCount; strip++) {  
+        float strip_angle = g_engine.stripAngles[strip];  
+        int num_hits = 0;  
+          
+        ray_raycaster_raycast(&g_engine.raycaster,  
+                             &all_rayhits[strip * RAY_MAX_RAYHITS],  
+                             &num_hits,  
+                             (int)g_engine.camera.x,  
+                             (int)g_engine.camera.y,  
+                             g_engine.camera.z,  
+                             g_engine.camera.rot,  
+                             strip_angle,  
+                             strip,  
+                             g_engine.sprites,  
+                             g_engine.num_sprites);  
+          
+        /* Raycast ThinWalls (slopes/ramps) */  
+        extern RAY_Engine g_engine;  
+        if (g_engine.num_thick_walls > 0) {  
+            ray_raycast_thin_walls(&all_rayhits[strip * RAY_MAX_RAYHITS],  
+                                  &num_hits,  
+                                  g_engine.thickWalls,  
+                                  g_engine.num_thick_walls,  
+                                  g_engine.camera.x,  
+                                  g_engine.camera.y,  
+                                  g_engine.camera.z,  
+                                  g_engine.camera.rot,  
+                                  strip_angle,  
+                                  strip,  
+                                  g_engine.raycaster.gridWidth,  
+                                  g_engine.raycaster.tileSize);  
+        }  
+          
+        rayhit_counts[strip] = num_hits;  
+          
+        // DEBUG: Verificar hits multinivel  
+        static int debug_count = 0;  
+        if (debug_count < 5 && num_hits > 0) {  
+            printf("RAY_DEBUG: Strip %d tiene %d hits:\n", strip, num_hits);  
+            for (int h = 0; h < num_hits; h++) {  
+                RAY_RayHit *hit = &all_rayhits[strip * RAY_MAX_RAYHITS + h];  
+                printf("  Hit %d: level=%d, wallType=%d, distance=%.2f\n",   
+                       h, hit->level, hit->wallType, hit->distance);  
+            }  
+            debug_count++;  
+        }  
+          
+        // Actualizar z-buffer con el hit más cercano  
+        for (int h = 0; h < num_hits; h++) {  
+            RAY_RayHit *hit = &all_rayhits[strip * RAY_MAX_RAYHITS + h];  
+            if (hit->wallType > 0 && hit->distance < z_buffer[strip]) {  
+                z_buffer[strip] = hit->distance;  
+            }  
+        }  
+    }  
+      
+    // ========================================  
+    // RENDER PHASE  
+    // ========================================  
+      
+    // Renderizar paredes, suelos y techos  
+    // ESTRATEGIA: Renderizar de atrás hacia adelante (farthest to nearest)  
+    // Esto permite ver niveles superiores flotantes mientras evita duplicados  
+      
+    for (int strip = 0; strip < g_engine.rayCount; strip++) {  
+        int num_hits = rayhit_counts[strip];  
+          
+        if (num_hits == 0) continue;  
+          
+        /* Ordenar hits por distancia (más lejano primero) usando bubble sort simple */  
+        RAY_RayHit *hits = &all_rayhits[strip * RAY_MAX_RAYHITS];  
+        for (int i = 0; i < num_hits - 1; i++) {  
+            for (int j = 0; j < num_hits - i - 1; j++) {  
+                if (hits[j].distance < hits[j + 1].distance) {  
+                    RAY_RayHit temp = hits[j];  
+                    hits[j] = hits[j + 1];  
+                    hits[j + 1] = temp;  
+                }  
+            }  
+        }  
+          
+    }  
+      
+    /* Recolectar todos los hits de todos los strips */  
+    int total_hits = 0;  
+    for (int x = 0; x < g_engine.rayCount; x++) {  
+        total_hits += rayhit_counts[x];  
+    }  
+      
+    /* Total hits calculated */  
+      
+    // ========================================  
+    // FLOOR AND CEILING RENDERING FIRST  
+    // Renderizar ANTES de las paredes para que las paredes se dibujen encima  
+    // ========================================  
+      
+    for (int x = 0; x < g_engine.rayCount; x++) {  
+        int num_hits = rayhit_counts[x];  
+        RAY_RayHit *hits = &all_rayhits[x * RAY_MAX_RAYHITS];  
+          
+        // Calcular parámetros de renderizado basados en el hit más cercano QUE NO SEA PUERTA  
+        int wall_screen_height = 0;  // Por defecto 0 para que el suelo se vea completo  
+        float player_screen_z = 0.0f;  
+          
+        // Crear un rayHit para este strip  
+        RAY_RayHit floor_hit;  
+        floor_hit.strip = x;  
+        floor_hit.rayAngle = g_engine.camera.rot + g_engine.stripAngles[x];  
+          
+        // Buscar si hay puertas en este strip  
+        int has_door = 0;  
+        for (int h = 0; h < num_hits; h++) {  
+            if (ray_is_door(hits[h].wallType)) {  
+                has_door = 1;  
+                break;  
+            }  
+        }  
+          
+        // Si hay una puerta, SIEMPRE usar wall_height=0 para ver el suelo completo  
+        if (has_door) {  
+            floor_hit.correctDistance = RAY_TILE_SIZE * 10.0f;  
+            wall_screen_height = 0;  // Ver suelo completo a través de puertas  
+              
+            static int debug_floor = 0;  
+            if (debug_floor < 3) {  
+                printf("RAY_FLOOR: Strip %d tiene PUERTA - forzando wall_height=0 para ver suelo\n", x);  
+                debug_floor++;  
+            }  
         } else {
             // No hay puertas - buscar pared más cercana para clipear correctamente
-            // IGNORAR ThinWalls para que el suelo se vea debajo de rampas
+            // IGNORAR ThinWalls Y paredes flotantes (wallZOffset > 0) para que el suelo se vea debajo
             RAY_RayHit *closest_wall = NULL;
             for (int h = num_hits - 1; h >= 0; h--) {
-                if (!hits[h].thinWall) {  // NUEVO: Ignorar ThinWalls
-                    closest_wall = &hits[h];
-                    break;
+                // Ignorar ThinWalls
+                if (hits[h].thinWall) continue;
+                
+                // NUEVO: Ignorar paredes flotantes (que no llegan al suelo)
+                // Solo paredes que empiezan en el suelo (wallZOffset == 0) deben clipear floor/ceiling
+                float player_height = 64.0f;
+                float player_top = g_engine.camera.z + player_height;
+                
+                // Si el jugador está por debajo del inicio de la pared, esta pared no debe clipear
+                if (player_top < hits[h].wallZOffset) {
+                    continue;  // Esta es una pared flotante, ignorarla para clipping
                 }
+                
+                // Esta pared sí llega al nivel del jugador, usarla para clipear
+                closest_wall = &hits[h];
+                break;
             }
-            
+              
             if (closest_wall) {
                 floor_hit.correctDistance = closest_wall->correctDistance;
-                
+                  
                 wall_screen_height = (int)ray_strip_screen_height(g_engine.viewDist,
                                                                    closest_wall->correctDistance,
                                                                    RAY_TILE_SIZE);
-                
+                  
                 player_screen_z = ray_strip_screen_height(g_engine.viewDist,
                                                           closest_wall->correctDistance,
                                                           g_engine.camera.z);
             } else {
-                // No hay hits de paredes normales - espacio abierto o solo ThinWalls
+                // No hay hits de paredes normales - espacio abierto o solo ThinWalls/paredes flotantes
                 floor_hit.correctDistance = RAY_TILE_SIZE * 10.0f;
                 wall_screen_height = 0;
             }
-        }
-        
-        // Renderizar suelo y techo para este strip
-        // CORREGIDO: Usar OR (||) en lugar de AND (&&) para permitir renderizado independiente
-        if (g_engine.drawTexturedFloor || g_engine.drawCeiling) {
-            ray_draw_floor_ceiling_strip(dest, &floor_hit, wall_screen_height, player_screen_z);
-        }
-    }
-    
-    // ========================================
-    // WALL RENDERING
-    // Renderizar paredes DESPUÉS del suelo
-    // ========================================
-    
-    /* Renderizar cada strip */
-    for (int x = 0; x < g_engine.rayCount; x++) {
-        int num_hits = rayhit_counts[x];
-        RAY_RayHit *hits = &all_rayhits[x * RAY_MAX_RAYHITS];
-        
-        /* Esto permite ver niveles superiores mientras el más cercano tapa lo que está detrás */
-        for (int h = 0; h < num_hits; h++) {
-            RAY_RayHit *rayHit = &hits[h];
-            
-            if (rayHit->wallType == 0) continue;
-            
-            /* FILTRADO MULTINIVEL SIMPLIFICADO:
-             * Determinar si la cámara está "dentro" de un edificio cerrado
-             * verificando si hay techo en la posición de la cámara.
-             */
-            int camera_level = (int)(g_engine.camera.z / RAY_TILE_SIZE);
-            if (camera_level < 0) camera_level = 0;
-            if (camera_level > 2) camera_level = 2;
-            
-            /* Verificar si hay techo en la posición de la cámara */
-            int camera_tile_x = (int)(g_engine.camera.x / RAY_TILE_SIZE);
-            int camera_tile_y = (int)(g_engine.camera.y / RAY_TILE_SIZE);
-            int is_inside = 0;
-            
-            if (camera_tile_x >= 0 && camera_tile_x < g_engine.raycaster.gridWidth &&
-                camera_tile_y >= 0 && camera_tile_y < g_engine.raycaster.gridHeight &&
-                g_engine.ceilingGrids[camera_level]) {
-                int camera_grid_offset = camera_tile_x + camera_tile_y * g_engine.raycaster.gridWidth;
-                int ceiling_tile = g_engine.ceilingGrids[camera_level][camera_grid_offset];
-                is_inside = (ceiling_tile > 0);  // Hay techo = estamos dentro
-            }
-            
-            /* Si estamos dentro, solo renderizar el nivel actual */
-            if (is_inside && rayHit->level != camera_level) {
-                continue;
-            }
-            /* Si estamos fuera, renderizar todos los niveles */
-            
-            
-            // Calcular altura de pared en pantalla
-            // IMPORTANTE: Para ThinWalls (slopes), usar wallHeight que varía según la posición
-            float wall_height_to_use = RAY_TILE_SIZE;
-            if (rayHit->thinWall) {
-                wall_height_to_use = rayHit->wallHeight;
-            }
-            
-            int wall_screen_height = (int)ray_strip_screen_height(g_engine.viewDist,
-                                                                   rayHit->correctDistance,
-                                                                   wall_height_to_use);
-            
-            float player_screen_z = ray_strip_screen_height(g_engine.viewDist,
-                                                           rayHit->correctDistance,
-                                                           g_engine.camera.z);
-            
-            
-            // Convertir ID de puerta a ID de textura
-            int texture_id = rayHit->wallType;
-            int is_door = ray_is_door(texture_id);
-            float door_offset = 0.0f;
+        }  
+          
+        // Renderizar suelo y techo para este strip  
+        // CORREGIDO: Usar OR (||) en lugar de AND (&&) para permitir renderizado independiente  
+        if (g_engine.drawTexturedFloor || g_engine.drawCeiling) {  
+            ray_draw_floor_ceiling_strip(dest, &floor_hit, wall_screen_height, player_screen_z);  
+        }  
+    }  
+      
+    // ========================================  
+    // WALL RENDERING  
+    // Renderizar paredes DESPUÉS del suelo  
+    // ========================================  
+      
+    /* Renderizar cada strip */  
+    for (int x = 0; x < g_engine.rayCount; x++) {  
+        int num_hits = rayhit_counts[x];  
+        RAY_RayHit *hits = &all_rayhits[x * RAY_MAX_RAYHITS];  
+          
+        /* Esto permite ver niveles superiores mientras el más cercano tapa lo que está detrás */  
+        for (int h = 0; h < num_hits; h++) {  
+            RAY_RayHit *rayHit = &hits[h];  
+              
+            if (rayHit->wallType == 0) continue;  
+              
+            /* FILTRADO MULTINIVEL SIMPLIFICADO:  
+             * Determinar si la cámara está "dentro" de un edificio cerrado  
+             * verificando si hay techo en la posición de la cámara.  
+             */  
+            int camera_level = (int)(g_engine.camera.z / RAY_TILE_SIZE);  
+            if (camera_level < 0) camera_level = 0;  
+            if (camera_level > 2) camera_level = 2;  
+              
+            /* Verificar si hay techo en la posición de la cámara */  
+            int camera_tile_x = (int)(g_engine.camera.x / RAY_TILE_SIZE);  
+            int camera_tile_y = (int)(g_engine.camera.y / RAY_TILE_SIZE);  
+            int is_inside = 0;  
+              
+            if (camera_tile_x >= 0 && camera_tile_x < g_engine.raycaster.gridWidth &&  
+                camera_tile_y >= 0 && camera_tile_y < g_engine.raycaster.gridHeight &&  
+                g_engine.ceilingGrids[camera_level]) {  
+                int camera_grid_offset = camera_tile_x + camera_tile_y * g_engine.raycaster.gridWidth;  
+                int ceiling_tile = g_engine.ceilingGrids[camera_level][camera_grid_offset];  
+                is_inside = (ceiling_tile > 0);  // Hay techo = estamos dentro  
+            }  
+              
+            /* Si estamos dentro, solo renderizar el nivel actual */  
+            if (is_inside && rayHit->level != camera_level) {  
+                continue;  
+            }  
+            /* Si estamos fuera, renderizar todos los niveles */  
+              
+              
+            // Calcular altura de pared en pantalla  
+            // Usar wallHeight del rayHit (que viene de heightGrids o thinWall)  
+            float wall_height_to_use = rayHit->wallHeight;  
+              
+            int wall_screen_height = (int)ray_strip_screen_height(g_engine.viewDist,  
+                                                                   rayHit->correctDistance,  
+                                                                   wall_height_to_use);  
+              
+            float player_screen_z = ray_strip_screen_height(g_engine.viewDist,  
+                                                           rayHit->correctDistance,  
+                                                           g_engine.camera.z);  
+              
+              
+            // Aplicar Z-offset de la pared (altura base)
+            // Las paredes empiezan DESDE wallZOffset hacia arriba
+            float wall_z_offset_screen = ray_strip_screen_height(g_engine.viewDist,
+                                                                 rayHit->correctDistance,
+                                                                 rayHit->wallZOffset);
+            player_screen_z -= wall_z_offset_screen;  // RESTAR para elevar la pared (coordenadas de pantalla invertidas)
+              
+            // Convertir ID de puerta a ID de textura  
+            int texture_id = rayHit->wallType;  
+            int is_door = ray_is_door(texture_id);  
+            float door_offset = 0.0f;  
+              
             
             static int door_detection_debug = 0;
+              
+            if (is_door) {  
+                /* Obtener estado de la puerta */  
+                int door_grid_offset = rayHit->wallX + rayHit->wallY * g_engine.raycaster.gridWidth;  
+                  
+                if (door_detection_debug < 5) {  
+                    printf("RAY_RENDER: Puerta detectada! wallType=%d, pos=(%d,%d), grid_offset=%d\n",  
+                           rayHit->wallType, rayHit->wallX, rayHit->wallY, door_grid_offset);  
+                    door_detection_debug++;  
+                }  
+                  
+                if (g_engine.doors && door_grid_offset >= 0 &&   
+                    door_grid_offset < g_engine.raycaster.gridWidth * g_engine.raycaster.gridHeight) {  
+                    RAY_Door *door = &g_engine.doors[door_grid_offset];  
+                    door_offset = door->offset;  
+                      
+                    if (door_detection_debug < 5) {  
+                        printf("RAY_RENDER: Door state=%d, offset=%.2f, animating=%d\n",  
+                               door->state, door->offset, door->animating);  
+                        door_detection_debug++;  
+                    }  
+                }  
+                  
+                // Puertas verticales: 1001-1500 → restar 1000  
+                // Puertas horizontales: 1501+ → restar 1500  
+                if (ray_is_vertical_door(texture_id)) {  
+                    texture_id = texture_id - 1000;  
+                } else {  
+                    texture_id = texture_id - 1500;  
+                }  
+                  
+                // DEBUG: Mostrar cuando se renderiza una puerta (solo primeras 3)  
+                static int door_render_count = 0;  
+                if (door_render_count < 3) {  
+                    printf("RAY_RENDER: Renderizando puerta ID=%d → textura=%d en strip %d, offset=%.2f\n",  
+                           rayHit->wallType, texture_id, x, door_offset);  
+                    door_render_count++;  
+                }  
+            }  
+              
+            // Obtener textura de pared  
+            GRAPH *wall_texture = bitmap_get(g_engine.fpg_id, texture_id);  
+              
+            // DEBUG: Verificar si la textura se cargó  
+            if (is_door) {  
+                static int texture_check_count = 0;  
+                if (texture_check_count < 3) {  
+                    printf("RAY_RENDER: Textura %d %s (fpg_id=%d)\n",  
+                           texture_id, wall_texture ? "CARGADA" : "NO ENCONTRADA", g_engine.fpg_id);  
+                    texture_check_count++;  
+                }  
+            }  
             
-            if (is_door) {
-                /* Obtener estado de la puerta */
-                int door_grid_offset = rayHit->wallX + rayHit->wallY * g_engine.raycaster.gridWidth;
-                
-                if (door_detection_debug < 5) {
-                    printf("RAY_RENDER: Puerta detectada! wallType=%d, pos=(%d,%d), grid_offset=%d\n",
-                           rayHit->wallType, rayHit->wallX, rayHit->wallY, door_grid_offset);
-                    door_detection_debug++;
-                }
-                
-                if (g_engine.doors && door_grid_offset >= 0 && 
-                    door_grid_offset < g_engine.raycaster.gridWidth * g_engine.raycaster.gridHeight) {
-                    RAY_Door *door = &g_engine.doors[door_grid_offset];
-                    door_offset = door->offset;
-                    
-                    if (door_detection_debug < 5) {
-                        printf("RAY_RENDER: Door state=%d, offset=%.2f, animating=%d\n",
-                               door->state, door->offset, door->animating);
-                        door_detection_debug++;
-                    }
-                }
-                
-                // Puertas verticales: 1001-1500 → restar 1000
-                // Puertas horizontales: 1501+ → restar 1500
-                if (ray_is_vertical_door(texture_id)) {
-                    texture_id = texture_id - 1000;
-                } else {
-                    texture_id = texture_id - 1500;
-                }
-                
-                // DEBUG: Mostrar cuando se renderiza una puerta (solo primeras 3)
-                static int door_render_count = 0;
-                if (door_render_count < 3) {
-                    printf("RAY_RENDER: Renderizando puerta ID=%d → textura=%d en strip %d, offset=%.2f\n",
-                           rayHit->wallType, texture_id, x, door_offset);
-                    door_render_count++;
-                }
+            // DEBUG: Verificar por qué no se renderizan las paredes
+            static int wall_render_debug = 0;
+            if (wall_render_debug < 3) {
+                printf("WALL_RENDER_DEBUG: drawWalls=%d, wall_texture=%p, texture_id=%d\n",
+                       g_engine.drawWalls, (void*)wall_texture, texture_id);
+                wall_render_debug++;
             }
-            
-            // Obtener textura de pared
-            GRAPH *wall_texture = bitmap_get(g_engine.fpg_id, texture_id);
-            
-            // DEBUG: Verificar si la textura se cargó
-            if (is_door) {
-                static int texture_check_count = 0;
-                if (texture_check_count < 3) {
-                    printf("RAY_RENDER: Textura %d %s (fpg_id=%d)\n",
-                           texture_id, wall_texture ? "CARGADA" : "NO ENCONTRADA", g_engine.fpg_id);
-                    texture_check_count++;
-                }
-            }
-            
-            // Renderizar pared
-            if (g_engine.drawWalls && wall_texture) {
-                /* Aplicar offset de animación */
-                if (is_door && door_offset > 0.0f) {
-                    static int door_offset_debug = 0;
-                    
-                    /* Para puertas VERTICALES, deslizar horizontalmente (modificar tileX) */
-                    if (ray_is_vertical_door(rayHit->wallType)) {
-                        if (door_offset_debug < 10) {
-                            printf("RAY_RENDER: Puerta VERTICAL - offset %.2f, tileX original=%.2f\n", 
-                                   door_offset, rayHit->tileX);
-                            door_offset_debug++;
-                        }
-                        
-                        /* Modificar tileX para crear efecto de deslizamiento horizontal */
-                        rayHit->tileX += door_offset * RAY_TILE_SIZE;
-                        
-                        /* Si tileX sale del rango de la textura, la puerta está "fuera de vista" */
-                        if (rayHit->tileX >= RAY_TILE_SIZE) {
-                            /* Puerta completamente abierta - no renderizar */
-                            if (door_offset_debug < 10) {
-                                printf("RAY_RENDER: Puerta vertical fuera de vista\n");
-                                door_offset_debug++;
-                            }
-                            goto skip_wall_render;
-                        }
-                    } 
-                    /* Para puertas HORIZONTALES, deslizar verticalmente (reducir altura) */
-                    else {
-                        if (door_offset_debug < 10) {
-                            printf("RAY_RENDER: Puerta HORIZONTAL - offset %.2f, altura original=%d\n", 
-                                   door_offset, wall_screen_height);
-                            door_offset_debug++;
-                        }
-                        
-                        /* Reducir altura de pared para crear efecto de deslizamiento vertical */
-                        int original_height = wall_screen_height;
-                        wall_screen_height = (int)(wall_screen_height * (1.0f - door_offset));
-                        
-                        /* Ajustar player_screen_z para que la puerta se deslice desde abajo hacia arriba */
-                        /* RESTAR la diferencia para que suba en lugar de bajar */
-                        player_screen_z -= (original_height - wall_screen_height);
-                        
-                        /* Si la altura es muy pequeña, no renderizar */
-                        if (wall_screen_height < 2) {
-                            if (door_offset_debug < 10) {
-                                printf("RAY_RENDER: Puerta horizontal completamente abierta\n");
-                                door_offset_debug++;
-                            }
-                            goto skip_wall_render;
-                        }
-                    }
-                }
-                
-                ray_draw_wall_strip(dest, rayHit, wall_screen_height, player_screen_z,
-                                   wall_texture, rayHit->horizontal);
-                
-                /* Slope Rendering */
-                if (rayHit->thinWall && rayHit->thinWall->thickWall && 
-                    rayHit->thinWall->thickWall->slope != 0.0f) {
-                    
-                    if (rayHit->thinWall->thickWall->invertedSlope) {
-                        ray_draw_slope_inverted(dest, rayHit, player_screen_z);
-                    } else {
-                        ray_draw_slope(dest, rayHit, player_screen_z);
-                    }
-                }
-            }
-            
-            skip_wall_render:;
-            
-            // Suelo ya renderizado ANTES de las paredes
-        }
-    }
-    
-    // Renderizar sprites (después de paredes)
-    ray_draw_sprites(dest, z_buffer);
-    
-    // Renderizar minimapa (al final, encima de todo)
-    ray_draw_minimap(dest);
-    
-    // Liberar memoria
-    free(all_rayhits);
-    free(rayhit_counts);
-    free(z_buffer);
+              
+            // Renderizar pared  
+            if (g_engine.drawWalls && wall_texture) {  
+                /* Aplicar offset de animación */  
+                if (is_door && door_offset > 0.0f) {  
+                    static int door_offset_debug = 0;  
+                      
+                    /* Para puertas VERTICALES, deslizar horizontalmente (modificar tileX) */  
+                    if (ray_is_vertical_door(rayHit->wallType)) {  
+                        if (door_offset_debug < 10) {  
+                            printf("RAY_RENDER: Puerta VERTICAL - offset %.2f, tileX original=%.2f\n",   
+                                   door_offset, rayHit->tileX);  
+                            door_offset_debug++;  
+                        }  
+                          
+                        /* Modificar tileX para crear efecto de deslizamiento horizontal */  
+                        rayHit->tileX += door_offset * RAY_TILE_SIZE;  
+                          
+                        /* Si tileX sale del rango de la textura, la puerta está "fuera de vista" */  
+                        if (rayHit->tileX >= RAY_TILE_SIZE) {  
+                            /* Puerta completamente abierta - no renderizar */  
+                            if (door_offset_debug < 10) {  
+                                printf("RAY_RENDER: Puerta vertical fuera de vista\n");  
+                                door_offset_debug++;  
+                            }  
+                            goto skip_wall_render;  
+                        }  
+                    }   
+                    /* Para puertas HORIZONTALES, deslizar verticalmente (reducir altura) */  
+                    else {  
+                        if (door_offset_debug < 10) {  
+                            printf("RAY_RENDER: Puerta HORIZONTAL - offset %.2f, altura original=%d\n",   
+                                   door_offset, wall_screen_height);  
+                            door_offset_debug++;  
+                        }  
+                          
+                        /* Reducir altura de pared para crear efecto de deslizamiento vertical */  
+                        int original_height = wall_screen_height;  
+                        wall_screen_height = (int)(wall_screen_height * (1.0f - door_offset));  
+                          
+                        /* Ajustar player_screen_z para que la puerta se deslice desde abajo hacia arriba */  
+                        /* RESTAR la diferencia para que suba en lugar de bajar */  
+                        player_screen_z -= (original_height - wall_screen_height);  
+                          
+                        /* Si la altura es muy pequeña, no renderizar */  
+                        if (wall_screen_height < 2) {  
+                            if (door_offset_debug < 10) {  
+                                printf("RAY_RENDER: Puerta horizontal completamente abierta\n");  
+                                door_offset_debug++;  
+                            }  
+                            goto skip_wall_render;  
+                        }  
+                    }  
+                }  
+                  
+                ray_draw_wall_strip(dest, rayHit, wall_screen_height, player_screen_z,  
+                                   wall_texture, rayHit->horizontal);  
+                  
+                /* Slopes no longer supported - draw as normal wall */
+            }  
+              
+            skip_wall_render:;  
+              
+            // Suelo ya renderizado ANTES de las paredes  
+        }  
+    }  
+      
+    // Renderizar sprites (después de paredes)  
+    ray_draw_sprites(dest, z_buffer);  
+      
+    // Renderizar minimapa (al final, encima de todo)  
+    ray_draw_minimap(dest);  
+      
+    // Liberar memoria  
+    free(all_rayhits);  
+    free(rayhit_counts);  
+    free(z_buffer);  
 }

@@ -167,6 +167,7 @@ typedef struct {
     int up;                          /* 1 si el rayo va hacia arriba */
     RAY_ThinWall *thinWall;         /* ThinWall golpeado */
     float wallHeight;                /* Altura de la pared */
+    float wallZOffset;               /* Z-offset (altura base) de la pared */
     float invertedZ;                 /* Z invertido (para slopes invertidos) */
     
     /* Sibling (para slopes) */
@@ -190,6 +191,8 @@ typedef struct {
     int gridHeight;
     int gridCount;                   /* Número de niveles */
     int tileSize;
+    float **heightGrids;             /* Array de grids de altura [nivel][offset] */
+    float **zOffsetGrids;            /* Array de grids de Z-offset [nivel][offset] */
 } RAY_Raycaster;
 
 /* ============================================================================

@@ -20,8 +20,13 @@ void ray_raycaster_create_grids(RAY_Raycaster *rc, int width, int height, int co
     rc->tileSize = tileSize;
     
     rc->grids = (int**)malloc(count * sizeof(int*));
+    rc->heightGrids = (float**)malloc(count * sizeof(float*)); // ALLOCATE POINTERS
+    rc->zOffsetGrids = (float**)malloc(count * sizeof(float*)); // ALLOCATE POINTERS
+    
     for (int z = 0; z < count; z++) {
         rc->grids[z] = (int*)calloc(width * height, sizeof(int));
+        rc->heightGrids[z] = (float*)calloc(width * height, sizeof(float)); // ALLOCATE DATA
+        rc->zOffsetGrids[z] = (float*)calloc(width * height, sizeof(float)); // ALLOCATE DATA
     }
 }
 
@@ -75,32 +80,10 @@ static int any_space_below(RAY_Raycaster *rc, int x, int y, int z)
 static int any_space_above(RAY_Raycaster *rc, int x, int y, int z)
 {
     /* MODIFICADO: Siempre retornar 1 para permitir renderizado multi-nivel */
-    /* Esto permite ver estructuras flotantes y torres en niveles superiores */
-    /* incluso si hay paredes en niveles inferiores */
     return 1;
-    
-    /* Código original comentado - implementaba oclusión estricta
-    if (z == 0) {
-        int *grid = rc->grids[0];
-        if (x >= 0 && y >= 0) {
-            if (ray_is_door(grid[x + y * rc->gridWidth])) {
-                return 1;
-            }
-        }
-    }
-    
-    for (int level = z + 1; level < rc->gridCount; level++) {
-        int *grid = rc->grids[level];
-        int gridOffset = x + y * rc->gridWidth;
-        if (grid[gridOffset] == 0 || ray_is_door(grid[gridOffset])) {
-            return 1;
-        }
-    }
-    return 0;
-    */
 }
 
-static int needs_next_wall(RAY_Raycaster *rc, float playerZ, int x, int y, int z)
+static int needs_next_wall(RAY_Raycaster *rc, float playerZ, int x, int y, int z, float wallZOffset, float wallHeight)
 {
     /* Siempre permitir puertas */
     if (z == 0) {
@@ -112,19 +95,34 @@ static int needs_next_wall(RAY_Raycaster *rc, float playerZ, int x, int y, int z
         }
     }
     
-    /* Calcular altura del ojo y límites del nivel */
+    /* Calcular altura del ojo del jugador */
     float eyeHeight = rc->tileSize / 2.0f + playerZ;
+    
+    /* NUEVO: Verificar si el rayo pasa por el hueco bajo una pared flotante */
+    /* Si la pared tiene Z-offset y el ojo está por debajo del inicio de la pared, */
+    /* el rayo puede pasar por debajo y ver lo que hay detrás */
+    if (wallZOffset > 0.0f) {
+        /* Altura del jugador (asumimos ~64 unidades) */
+        float player_height = 64.0f;
+        float player_top = playerZ + player_height;
+        
+        /* Si el jugador está completamente por debajo del inicio de la pared, */
+        /* el rayo pasa por el hueco y debe continuar buscando */
+        if (player_top < wallZOffset) {
+            return 1;  // Continuar buscando, el rayo pasa por el hueco
+        }
+    }
+    
+    /* Calcular límites del nivel */
     float wallBottom = z * rc->tileSize;
     float wallTop = wallBottom + rc->tileSize;
     
-    /* Si el ojo está dentro del nivel actual, no buscar más niveles
-     * Esto hace que desde dentro de una habitación solo veas ese nivel */
+    /* Si el ojo está dentro del nivel actual, no buscar más niveles */
     if (eyeHeight >= wallBottom && eyeHeight <= wallTop) {
         return 0;  // Estamos dentro de este nivel, no buscar más
     }
     
-    /* Si el ojo está por encima o por debajo, continuar buscando
-     * Esto permite ver edificios completos desde fuera */
+    /* Si el ojo está por encima o por debajo, continuar buscando */
     int eyeAboveWall = eyeHeight > wallTop;
     int eyeBelowWall = eyeHeight < wallBottom;
     
@@ -153,6 +151,8 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
                            float playerRot, float stripAngle, int stripIdx,
                            RAY_Sprite *sprites, int num_sprites)
 {
+    extern RAY_Engine g_engine;  // Para acceder a floorHeightGrids
+    
     if (!rc->grids || rc->gridCount == 0) {
         *num_hits = 0;
         return;
@@ -170,10 +170,6 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
     int right = (rayAngle < RAY_TWO_PI * 0.25f && rayAngle >= 0) ||
                 (rayAngle > RAY_TWO_PI * 0.75f);
     int up = rayAngle < RAY_TWO_PI * 0.5f && rayAngle >= 0;
-    
-    int *groundGrid = rc->grids[0];
-    int currentTileX = playerX / rc->tileSize;
-    int currentTileY = playerY / rc->tileSize;
     
     /* Iterar por cada nivel del grid */
     for (int level = 0; level < rc->gridCount; level++) {
@@ -198,15 +194,12 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
         float stepx = right ? rc->tileSize : -rc->tileSize;
         float stepy = rc->tileSize * tanf(rayAngle);
         
-        /* tan() returns positive values in Quadrant 1 and Quadrant 4 but window
-         * coordinates need negative coordinates for Y-axis so we reverse */
         if (right) {
             stepy = -stepy;
         }
         
         /* Recorrer líneas verticales */
-        /* NOTA: No verificamos límites en el while para permitir detectar muros en los bordes */
-        for (int step = 0; step < 100; step++) /* Máximo 100 pasos para evitar loops infinitos */
+        for (int step = 0; step < 300; step++) 
         {
             int wallY = (int)floorf(vy / rc->tileSize);
             int wallX = (int)floorf(vx / rc->tileSize);
@@ -218,7 +211,6 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
             }
             
             int wallOffset = wallX + wallY * rc->gridWidth;
-            
             
             /* Check if current cell is a wall (treat doors like normal walls) */
             if (grid[wallOffset] > 0) {
@@ -246,7 +238,31 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
                     rayHit->sortdistance = rayHit->distance;
                     rayHit->sprite = NULL;
                     rayHit->thinWall = NULL;
-                    rayHit->wallHeight = rc->tileSize;
+                    
+                    /* Hit! Calcular altura y Z-offset desde los grids */
+                    float wallHeight = rc->tileSize; // Default height
+                    float wallZOffset = 0.0f; // Default Z-offset
+                    if (rc->heightGrids && rc->heightGrids[level]) {
+                        wallHeight = rc->heightGrids[level][wallX + wallY * rc->gridWidth];
+                        // Si wallHeight es 0, usar default (para mapas antiguos)
+                        if (wallHeight == 0.0f) {
+                            wallHeight = rc->tileSize;
+                        }
+                    }
+                    if (rc->zOffsetGrids && rc->zOffsetGrids[level]) {
+                        wallZOffset = rc->zOffsetGrids[level][wallX + wallY * rc->gridWidth];
+                    }
+                    
+                    // IMPORTANTE: Sumar altura del suelo para que z=0 empiece desde el suelo
+                    extern RAY_Engine g_engine;
+                    if (g_engine.floorHeightGrids[level]) {
+                        float floor_height = g_engine.floorHeightGrids[level][wallX + wallY * rc->gridWidth];
+                        wallZOffset += floor_height * rc->tileSize;
+                    }
+                    
+                    rayHit->wallHeight = wallHeight;
+                    rayHit->wallZOffset = wallZOffset;
+                    rayHit->invertedZ = 0; // Sin slope
                     
                     rayHit->correctDistance = rayHit->distance * cosf(stripAngle);
                     rayHit->horizontal = 0;
@@ -254,7 +270,7 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
                     
                     hit_count++;
                     
-                    int gaps = needs_next_wall(rc, playerZ, wallX, wallY, level);
+                    int gaps = needs_next_wall(rc, playerZ, wallX, wallY, level, wallZOffset, wallHeight);
                     if (!gaps) {
                         break;
                     }
@@ -287,22 +303,18 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
         }
         
         /* Recorrer líneas horizontales */
-        /* NOTA: No verificamos límites en el while para permitir detectar muros en los bordes */
-        for (int step = 0; step < 100; step++) /* Máximo 100 pasos para evitar loops infinitos */
+        for (int step = 0; step < 300; step++) 
         {
             int wallY = (int)floorf(hy / rc->tileSize);
             int wallX = (int)floorf(hx / rc->tileSize);
             
-            /* Verificar que wallX y wallY estén dentro de los límites del grid */
             if (wallX < 0 || wallX >= rc->gridWidth || 
                 wallY < 0 || wallY >= rc->gridHeight) {
-                break; /* Salir del loop si estamos fuera del mapa */
+                break; 
             }
             
             int wallOffset = wallX + wallY * rc->gridWidth;
             
-            
-            /* Check if current cell is a wall (treat doors like normal walls) */
             if (grid[wallOffset] > 0) {
                 
                 float distX = playerX - hx;
@@ -328,7 +340,30 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
                     rayHit->sortdistance = rayHit->distance;
                     rayHit->sprite = NULL;
                     rayHit->thinWall = NULL;
-                    rayHit->wallHeight = rc->tileSize;
+                    
+                    /* Hit! Calcular altura y Z-offset desde los grids */
+                    float wallHeight = rc->tileSize; // Default height
+                    float wallZOffset = 0.0f; // Default Z-offset
+                    if (rc->heightGrids && rc->heightGrids[level]) {
+                        wallHeight = rc->heightGrids[level][wallX + wallY * rc->gridWidth];
+                        // Si wallHeight es 0, usar default (para mapas antiguos)
+                        if (wallHeight == 0.0f) {
+                            wallHeight = rc->tileSize;
+                        }
+                    }
+                    if (rc->zOffsetGrids && rc->zOffsetGrids[level]) {
+                        wallZOffset = rc->zOffsetGrids[level][wallX + wallY * rc->gridWidth];
+                    }
+                    
+                    // IMPORTANTE: Sumar altura del suelo para que z=0 empiece desde el suelo
+                    if (g_engine.floorHeightGrids[level]) {
+                        float floor_height = g_engine.floorHeightGrids[level][wallX + wallY * rc->gridWidth];
+                        wallZOffset += floor_height * rc->tileSize;
+                    }
+                    
+                    rayHit->wallHeight = wallHeight;
+                    rayHit->wallZOffset = wallZOffset;
+                    rayHit->invertedZ = 0; 
                     
                     rayHit->correctDistance = rayHit->distance * cosf(stripAngle);
                     rayHit->horizontal = 1;
@@ -336,7 +371,7 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
                     
                     hit_count++;
                     
-                    int gaps = needs_next_wall(rc, playerZ, wallX, wallY, level);
+                    int gaps = needs_next_wall(rc, playerZ, wallX, wallY, level, wallZOffset, wallHeight);
                     if (!gaps) {
                         break;
                     }
@@ -346,40 +381,33 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
             hx += stepx;
             hy += stepy;
         }
-    }
-    
+    } // CIERRE DEL BUCLE DE NIVELES
     
     
     /* ========================================
        DEDUPLICACIÓN DE HITS
-       Si vertical y horizontal encontraron la misma pared,
-       solo quedarnos con el más cercano
        ======================================== */
     
-    /* Eliminar hits duplicados que están en la misma posición de grid */
     for (int i = 0; i < hit_count; i++) {
-        if (hits[i].wallType == 0) continue; /* Ya eliminado */
+        if (hits[i].wallType == 0) continue; 
         
         for (int j = i + 1; j < hit_count; j++) {
-            if (hits[j].wallType == 0) continue; /* Ya eliminado */
+            if (hits[j].wallType == 0) continue; 
             
-            /* Si ambos hits están en el mismo tile y nivel */
             if (hits[i].wallX == hits[j].wallX && 
                 hits[i].wallY == hits[j].wallY &&
                 hits[i].level == hits[j].level) {
                 
-                /* Eliminar el más lejano */
                 if (hits[i].distance < hits[j].distance) {
-                    hits[j].wallType = 0; /* Marcar como eliminado */
+                    hits[j].wallType = 0; 
                 } else {
-                    hits[i].wallType = 0; /* Marcar como eliminado */
-                    break; /* Este hit ya fue eliminado, pasar al siguiente */
+                    hits[i].wallType = 0; 
+                    break; 
                 }
             }
         }
     }
     
-    /* Compactar array eliminando hits marcados como 0 */
     int write_idx = 0;
     for (int read_idx = 0; read_idx < hit_count; read_idx++) {
         if (hits[read_idx].wallType != 0) {
@@ -392,13 +420,13 @@ void ray_raycaster_raycast(RAY_Raycaster *rc, RAY_RayHit *hits, int *num_hits,
     hit_count = write_idx;
     
     *num_hits = hit_count;
-}
+} 
 
 /* ============================================================================
-   THINWALLS RAYCASTING
+   THINWALLS RAYCASTING HELPERS
    ============================================================================ */
 
-/* Find all ThinWalls that intersect with the ray */
+/* Helper: Encuentra intersecciones para ThinWalls */
 void ray_find_intersecting_thin_walls(RAY_RayHit *hits, int *num_hits,
                                       RAY_ThickWall **thickWalls, int num_thick_walls,
                                       float playerX, float playerY,
@@ -407,12 +435,10 @@ void ray_find_intersecting_thin_walls(RAY_RayHit *hits, int *num_hits,
     int hit_count = *num_hits;
     const int max_hits = RAY_MAX_RAYHITS;
     
-    /* Iterar sobre todos los ThickWalls */
     for (int tw_idx = 0; tw_idx < num_thick_walls; tw_idx++) {
         RAY_ThickWall *thickWall = thickWalls[tw_idx];
         if (!thickWall) continue;
         
-        /* Iterar sobre todos los ThinWalls de este ThickWall */
         for (int thin_idx = 0; thin_idx < thickWall->num_thin_walls; thin_idx++) {
             RAY_ThinWall *thinWall = &thickWall->thinWalls[thin_idx];
             if (thinWall->hidden) continue;
@@ -430,7 +456,7 @@ void ray_find_intersecting_thin_walls(RAY_RayHit *hits, int *num_hits,
                 float squaredDistance = distX * distX + distY * distY;
                 float distance = sqrtf(squaredDistance);
                 
-                if (distance > 0.1f) {  /* Evitar hits muy cercanos al jugador */
+                if (distance > 0.1f) {
                     RAY_RayHit *rayHit = &hits[hit_count];
                     rayHit->thinWall = thinWall;
                     rayHit->x = ix;
@@ -457,145 +483,6 @@ void ray_find_intersecting_thin_walls(RAY_RayHit *hits, int *num_hits,
     *num_hits = hit_count;
 }
 
-/* Raycast ThinWalls (slopes/ramps) */
-void ray_raycast_thin_walls(RAY_RayHit *hits, int *num_hits,
-                            RAY_ThickWall **thickWalls, int num_thick_walls,
-                            float playerX, float playerY, float playerZ,
-                            float playerRot, float stripAngle, int stripIdx,
-                            int gridWidth, int tileSize)
-{
-    if (num_thick_walls == 0) return;
-    
-    /* Calcular ángulo del rayo */
-    float rayAngle = stripAngle + playerRot;
-    while (rayAngle < 0) rayAngle += RAY_TWO_PI;
-    while (rayAngle >= RAY_TWO_PI) rayAngle -= RAY_TWO_PI;
-    
-    /* Determinar dirección */
-    int right = (rayAngle < RAY_TWO_PI * 0.25f && rayAngle >= 0) ||
-                (rayAngle > RAY_TWO_PI * 0.75f);
-    
-    /* Calcular punto final del rayo (en el borde del mapa) */
-    float vx = 0;
-    if (right) {
-        vx = gridWidth * tileSize;
-    } else {
-        vx = 0;
-    }
-    
-    float vy = playerY + (playerX - vx) * tanf(rayAngle);
-    
-    /* Encontrar ThinWalls que intersectan con este rayo */
-    int initial_hits = *num_hits;
-    ray_find_intersecting_thin_walls(hits, num_hits, thickWalls, num_thick_walls,
-                                     playerX, playerY, vx, vy);
-    
-    /* Procesar los nuevos hits */
-    for (int i = initial_hits; i < *num_hits; i++) {
-        RAY_RayHit *rayHit = &hits[i];
-        RAY_ThinWall *thinWall = rayHit->thinWall;
-        RAY_ThickWall *thickWall = thinWall->thickWall;
-        
-        rayHit->wallHeight = thinWall->height;
-        rayHit->strip = stripIdx;
-        
-        /* Calcular coordenada de textura basada en distancia al origen del ThinWall */
-        float dto = roundf(ray_thin_wall_distance_to_origin(thinWall, rayHit->x, rayHit->y));
-        rayHit->tileX = ((int)dto) % tileSize;
-        rayHit->horizontal = thinWall->horizontal;
-        rayHit->wallType = thinWall->wallType;
-        rayHit->rayAngle = rayAngle;
-        
-        if (rayHit->distance > 0) {
-            rayHit->correctDistance = rayHit->distance * cosf(playerRot - rayAngle);
-            
-            if (rayHit->correctDistance < 1.0f) {
-                /* Hit muy cercano, marcar como inválido */
-                rayHit->wallType = 0;
-                continue;
-            }
-            
-            /* Slope - calcular altura variable */
-            static int slope_check_debug = 0;
-            if (slope_check_debug < 5 && thickWall && thickWall->slope != 0) {
-                printf("SLOPE_CHECK: thinWall->slope=%.3f thickWall->slope=%.3f ptr=%p\n",
-                       thinWall->slope, thickWall->slope, (void*)thinWall);
-                slope_check_debug++;
-            }
-            
-            if (thinWall->slope != 0) {
-                float dto = ray_thin_wall_distance_to_origin(thinWall, rayHit->x, rayHit->y);
-                rayHit->wallHeight = thickWall->startHeight + thinWall->slope * dto;
-                
-                static int slope_calc_debug = 0;
-                if (slope_calc_debug < 5) {
-                    printf("SLOPE_CALC: startHeight=%.1f slope=%.3f dto=%.1f -> wallHeight=%.1f\n",
-                           thickWall->startHeight, thinWall->slope, dto, rayHit->wallHeight);
-                    printf("            thinWall: (%.1f,%.1f)-(%.1f,%.1f) hit: (%.1f,%.1f)\n",
-                           thinWall->x1, thinWall->y1, thinWall->x2, thinWall->y2,
-                           rayHit->x, rayHit->y);
-                    slope_calc_debug++;
-                }
-                
-                if (thickWall->invertedSlope) {
-                    rayHit->invertedZ = rayHit->wallHeight;
-                    rayHit->wallHeight = thickWall->tallerHeight - rayHit->wallHeight;
-                }
-            }
-        }
-    }
-    
-    /* ========================================
-       SIBLING SYSTEM - Find opposite wall for slopes
-       Port of raycasting.cpp lines 1101-1111
-       ======================================== */
-    for (int i = initial_hits; i < *num_hits; i++) {
-        RAY_RayHit *rayHit = &hits[i];
-        RAY_ThinWall *thinWall = rayHit->thinWall;
-        if (!thinWall) continue;
-        
-        RAY_ThickWall *thickWall = thinWall->thickWall;
-        if (!thickWall || thickWall->slope == 0) continue;
-        
-        /* Buscar siblings - otras paredes del mismo ThickWall */
-        for (int j = initial_hits; j < *num_hits; j++) {
-            if (i == j) continue;
-            
-            RAY_RayHit *otherHit = &hits[j];
-            if (!otherHit->thinWall) continue;
-            
-            /* Si ambos hits pertenecen al mismo ThickWall, son siblings */
-            if (otherHit->thinWall->thickWall == thickWall) {
-                /* Copy sibling data (port of RayHit::copySibling) */
-                rayHit->siblingWallHeight = otherHit->wallHeight;
-                rayHit->siblingDistance = otherHit->distance;
-                rayHit->siblingCorrectDistance = otherHit->correctDistance;
-                rayHit->siblingThinWallZ = otherHit->thinWall->z;
-                rayHit->siblingInvertedZ = otherHit->invertedZ;
-                
-                /* También copiar en la otra dirección */
-                otherHit->siblingWallHeight = rayHit->wallHeight;
-                otherHit->siblingDistance = rayHit->distance;
-                otherHit->siblingCorrectDistance = rayHit->correctDistance;
-                otherHit->siblingThinWallZ = rayHit->thinWall->z;
-                otherHit->siblingInvertedZ = rayHit->invertedZ;
-            }
-        }
-    }
-    
-    /* Compactar array eliminando hits inválidos */
-    int write_idx = 0;
-    for (int read_idx = 0; read_idx < *num_hits; read_idx++) {
-        if (hits[read_idx].wallType != 0 || hits[read_idx].sprite != NULL) {
-            if (write_idx != read_idx) {
-                hits[write_idx] = hits[read_idx];
-            }
-            write_idx++;
-        }
-    }
-    *num_hits = write_idx;
-}
-
 /* ============================================================================
    FIND SIBLING AT ANGLE
    Exact 1:1 port of RayHit::findSiblingAtAngle() from raycasting.cpp lines 48-111
@@ -609,18 +496,13 @@ int ray_find_sibling_at_angle(RAY_RayHit *rayHit, float originAngle, float playe
     }
     
     RAY_ThickWall *thickWall = rayHit->thinWall->thickWall;
-    static int debug_find = 0;
-    if (debug_find < 3) {
-        printf("FIND_SIBLING: Searching... originAngle=%.3f ThickWall has %d ThinWalls\n", originAngle, thickWall->num_thin_walls);
-        debug_find++;
-    }
     
-    float rayAngle = originAngle; /* Note: we don't add player angle */
+    float rayAngle = originAngle; 
     while (rayAngle < 0) rayAngle += RAY_TWO_PI;
     while (rayAngle >= RAY_TWO_PI) rayAngle -= RAY_TWO_PI;
     
-    int right = (rayAngle < RAY_TWO_PI * 0.25f && rayAngle >= 0) ||  /* Quadrant 1 */
-                (rayAngle > RAY_TWO_PI * 0.75f);                      /* Quadrant 4 */
+    int right = (rayAngle < RAY_TWO_PI * 0.25f && rayAngle >= 0) ||
+                (rayAngle > RAY_TWO_PI * 0.75f);
     
     float vx = 0;
     if (right) {
@@ -631,9 +513,6 @@ int ray_find_sibling_at_angle(RAY_RayHit *rayHit, float originAngle, float playe
     
     float vy = playerY + (playerX - vx) * tanf(rayAngle);
     
-    /* Para ThickWalls rectangulares (4 ThinWalls), encontrar el opuesto correcto:
-       [0]=west ↔ [1]=east
-       [2]=north ↔ [3]=south */
     int currentIndex = -1;
     for (int i = 0; i < thickWall->num_thin_walls; i++) {
         if (&thickWall->thinWalls[i] == rayHit->thinWall) {
@@ -642,41 +521,20 @@ int ray_find_sibling_at_angle(RAY_RayHit *rayHit, float originAngle, float playe
         }
     }
     
-    if (currentIndex == -1) {
-        if (debug_find < 3) {
-            printf("  ERROR: Current ThinWall not found in ThickWall!\n");
-            debug_find++;
-        }
-        return 0;
-    }
+    if (currentIndex == -1) return 0;
     
-    /* Determinar el índice del sibling opuesto */
     int siblingIndex = -1;
     if (thickWall->num_thin_walls == 4) {
-        /* Rectangular: 0↔1, 2↔3 */
         if (currentIndex == 0) siblingIndex = 1;
         else if (currentIndex == 1) siblingIndex = 0;
         else if (currentIndex == 2) siblingIndex = 3;
         else if (currentIndex == 3) siblingIndex = 2;
     }
     
-    if (siblingIndex == -1 || siblingIndex >= thickWall->num_thin_walls) {
-        if (debug_find < 3) {
-            printf("  No opposite sibling for ThinWall[%d]\n", currentIndex);
-            debug_find++;
-        }
-        return 0;
-    }
+    if (siblingIndex == -1 || siblingIndex >= thickWall->num_thin_walls) return 0;
     
     RAY_ThinWall *siblingThinWall = &thickWall->thinWalls[siblingIndex];
     
-    if (debug_find < 3) {
-        printf("  Using opposite sibling: ThinWall[%d] -> ThinWall[%d]\n", 
-               currentIndex, siblingIndex);
-        debug_find++;
-    }
-    
-    /* Calcular intersección con el sibling */
     float x = 0, y = 0;
     if (ray_lines_intersect(siblingThinWall->x1, siblingThinWall->y1,
                            siblingThinWall->x2, siblingThinWall->y2,
@@ -712,3 +570,84 @@ int ray_find_sibling_at_angle(RAY_RayHit *rayHit, float originAngle, float playe
     return 0;
 }
 
+/* ============================================================================
+   THINWALLS RAYCASTING MAIN
+   ============================================================================ */
+
+void ray_raycast_thin_walls(RAY_RayHit *hits, int *num_hits,  
+                            RAY_ThickWall **thickWalls, int num_thick_walls,  
+                            float playerX, float playerY, float playerZ,  
+                            float playerRot, float stripAngle, int stripIdx,  
+                            int gridWidth, int tileSize)  
+{  
+    if (num_thick_walls == 0) return;  
+      
+    float rayAngle = stripAngle + playerRot;  
+    while (rayAngle < 0) rayAngle += RAY_TWO_PI;  
+    while (rayAngle >= RAY_TWO_PI) rayAngle -= RAY_TWO_PI;  
+      
+    int right = (rayAngle < RAY_TWO_PI * 0.25f && rayAngle >= 0) ||  
+                (rayAngle > RAY_TWO_PI * 0.75f);  
+      
+    float vx = 0;  
+    if (right) {  
+        vx = gridWidth * tileSize;  
+    } else {  
+        vx = 0;  
+    }  
+      
+    float vy = playerY + (playerX - vx) * tanf(rayAngle);  
+      
+    /* Encontrar ThinWalls */  
+    int initial_hits = *num_hits;  
+    ray_find_intersecting_thin_walls(hits, num_hits, thickWalls, num_thick_walls,  
+                                     playerX, playerY, vx, vy);  
+      
+    /* Procesar hits */  
+    for (int i = initial_hits; i < *num_hits; i++) {  
+        RAY_RayHit *rayHit = &hits[i];  
+        RAY_ThinWall *thinWall = rayHit->thinWall;  
+        
+        rayHit->wallHeight = thinWall->height;  
+        rayHit->strip = stripIdx;  
+          
+        /* Texture Coords */  
+        float dto = roundf(ray_thin_wall_distance_to_origin(thinWall, rayHit->x, rayHit->y));  
+        rayHit->tileX = ((int)dto) % tileSize;  
+        rayHit->horizontal = thinWall->horizontal;  
+        rayHit->wallType = thinWall->wallType;  
+        rayHit->rayAngle = rayAngle;  
+          
+        if (rayHit->distance > 0) {  
+            rayHit->correctDistance = rayHit->distance * cosf(playerRot - rayAngle);  
+              
+            if (rayHit->correctDistance < 1.0f) {  
+                rayHit->wallType = 0;  
+                continue;  
+            }  
+        }
+
+        /* Guardar altura (redundante pero seguro) */
+        rayHit->wallHeight = thinWall->height;
+    }
+    
+    /* SIBLING SYSTEM */
+    for (int i = initial_hits; i < *num_hits; i++) {  
+        RAY_RayHit *rayHit = &hits[i];  
+        
+        /* En el port original de C++, se busca. Aquí simplificamos */
+        ray_find_sibling_at_angle(rayHit, rayAngle, playerRot, playerX, playerY, gridWidth, tileSize);
+    }
+      
+    /* Compactar */  
+    int write_idx = 0;  
+    for (int read_idx = 0; read_idx < *num_hits; read_idx++) {  
+        if (hits[read_idx].wallType != 0 || hits[read_idx].sprite != NULL) {  
+            if (write_idx != read_idx) {  
+                hits[write_idx] = hits[read_idx];  
+            }  
+            write_idx++;  
+        }  
+    }  
+    *num_hits = write_idx;  
+}

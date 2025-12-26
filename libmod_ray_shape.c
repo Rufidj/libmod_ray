@@ -343,32 +343,44 @@ int ray_thick_wall_contains_point(RAY_ThickWall *tw, float px, float py)
 }
 
 /* Exact 1:1 port of ThickWall::createRectSlope() from raycasting.cpp lines 205-230 */
-void ray_thick_wall_create_rect_slope(RAY_ThickWall *tw, int slopeType,
-                                      float x, float y, float w, float h, float z,
-                                      float startHeight, float endHeight)
-{
-    tw->slopeType = slopeType;
-    tw->startHeight = startHeight;
-    tw->endHeight = endHeight;
-    tw->tallerHeight = startHeight > endHeight ? startHeight : endHeight;
-    
-    if (RAY_SLOPE_TYPE_WEST_EAST == slopeType) {
-        ray_thick_wall_create_rect(tw, x, y, w, h, z, endHeight);
-        tw->slope = (endHeight - startHeight) / w;
-        tw->thinWalls[0].height = startHeight;  /* west */
-        tw->thinWalls[1].height = endHeight;    /* east */
-        tw->thinWalls[2].slope  = tw->slope;    /* north - SLOPE SURFACE */
-        tw->thinWalls[3].slope  = tw->slope;    /* south - SLOPE SURFACE */
-    }
-    else if (RAY_SLOPE_TYPE_NORTH_SOUTH == slopeType) {
-        ray_thick_wall_create_rect(tw, x, y, w, h, z, endHeight);
-        tw->slope = (endHeight - startHeight) / h;
-        tw->thinWalls[0].slope  = tw->slope;    /* west  - SLOPE SURFACE */
-        tw->thinWalls[1].slope  = tw->slope;    /* east  - SLOPE SURFACE */
-        tw->thinWalls[2].height = startHeight;  /* north */
-        tw->thinWalls[3].height = endHeight;    /* south */
-    }
-    ray_thick_wall_set_z(tw, z);
+void ray_thick_wall_create_rect_slope(RAY_ThickWall *tw, int slopeType,  
+                                      float x, float y, float w, float h, float z,  
+                                      float startHeight, float endHeight)  
+{  
+    tw->slopeType = slopeType;  
+    tw->startHeight = startHeight;  
+    tw->endHeight = endHeight;  
+    tw->tallerHeight = startHeight > endHeight ? startHeight : endHeight;  
+      
+    if (RAY_SLOPE_TYPE_WEST_EAST == slopeType) {  
+        ray_thick_wall_create_rect(tw, x, y, w, h, z, endHeight);  
+        tw->slope = (endHeight - startHeight) / w;  
+          
+        /* CORRECCIÓN: Configurar paredes laterales explícitamente */  
+        tw->thinWalls[0].height = startHeight;  /* west - pared lateral */  
+        tw->thinWalls[0].slope = 0.0f;          /* sin pendiente */  
+        tw->thinWalls[0].wallType = tw->ceilingTextureID; /* usar textura del ThickWall */  
+        tw->thinWalls[1].height = endHeight;    /* east - pared lateral */  
+        tw->thinWalls[1].slope = 0.0f;          /* sin pendiente */  
+        tw->thinWalls[1].wallType = tw->ceilingTextureID; /* usar textura del ThickWall */  
+        tw->thinWalls[2].slope  = tw->slope;    /* north - superficie */  
+        tw->thinWalls[3].slope  = tw->slope;    /* south - superficie */  
+    }  
+    else if (RAY_SLOPE_TYPE_NORTH_SOUTH == slopeType) {  
+        ray_thick_wall_create_rect(tw, x, y, w, h, z, endHeight);  
+        tw->slope = (endHeight - startHeight) / h;  
+          
+        /* CORRECCIÓN: Configurar paredes laterales explícitamente */  
+        tw->thinWalls[0].slope  = tw->slope;    /* west - superficie */  
+        tw->thinWalls[1].slope  = tw->slope;    /* east - superficie */  
+        tw->thinWalls[2].height = startHeight;  /* north - pared lateral */  
+        tw->thinWalls[2].slope = 0.0f;          /* sin pendiente */  
+        tw->thinWalls[2].wallType = tw->ceilingTextureID; /* usar textura del ThickWall */  
+        tw->thinWalls[3].height = endHeight;    /* south - pared lateral */  
+        tw->thinWalls[3].slope = 0.0f;          /* sin pendiente */  
+        tw->thinWalls[3].wallType = tw->ceilingTextureID; /* usar textura del ThickWall */  
+    }  
+    ray_thick_wall_set_z(tw, z);  
 }
 
 /* Exact 1:1 port of ThickWall::createRectInvertedSlope() from raycasting.cpp lines 232-275 */

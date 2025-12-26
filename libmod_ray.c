@@ -123,7 +123,7 @@ int64_t libmod_ray_init(INSTANCE *my, int64_t *params) {
     
     g_engine.initialized = 1;
     
-    printf("RAY: Motor inicializado - %dx%d, FOV=%d, stripWidth=%d, rayCount=%d\n",
+    printf("RAY: Motor inicializado (v5 ready) - %dx%d, FOV=%d, stripWidth=%d, rayCount=%d\n",
            screen_w, screen_h, fov, strip_width, g_engine.rayCount);
     printf("RAY: NOTA - La ventana debe ser inicializada con set_mode() antes de RAY_INIT\n");
     
@@ -284,6 +284,10 @@ static int ray_check_collision(float x, float y, float radius) {
     int gridWidth = g_engine.raycaster.gridWidth;
     int gridHeight = g_engine.raycaster.gridHeight;
     
+    /* Altura del jugador (asumimos que el jugador tiene ~64 unidades de altura) */
+    float player_height = 64.0f;
+    float player_top = g_engine.camera.z + player_height;
+    
     /* Verificar los 4 puntos cardinales alrededor del jugador */
     float checkPoints[4][2] = {
         {x + radius, y}, {x - radius, y}, {x, y + radius}, {x, y - radius}
@@ -307,7 +311,19 @@ static int ray_check_collision(float x, float y, float radius) {
                     if (door->offset < 0.9f) return 1; /* Puerta cerrada */
                 }
             } else {
-                return 1; /* Pared normal */
+                /* Pared normal - verificar Z-offset */
+                /* Obtener Z-offset de esta pared */
+                float wall_z_offset = 0.0f;
+                if (g_engine.raycaster.zOffsetGrids && g_engine.raycaster.zOffsetGrids[0]) {
+                    wall_z_offset = g_engine.raycaster.zOffsetGrids[0][gridX + gridY * gridWidth];
+                }
+                
+                /* Si el jugador está completamente por debajo del inicio de la pared, puede pasar */
+                if (player_top < wall_z_offset) {
+                    continue; /* No hay colisión, el jugador pasa por debajo */
+                }
+                
+                return 1; /* Hay colisión */
             }
         }
     }
