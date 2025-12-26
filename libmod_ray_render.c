@@ -595,6 +595,7 @@ static void ray_draw_floor_ceiling_strip(GRAPH *dest, RAY_RayHit *rayHit,
 
 }
 
+
 /* ============================================================================
    SPRITE RENDERING
    ============================================================================ */
@@ -1226,6 +1227,80 @@ void ray_render_frame(GRAPH *dest)
                   
                 ray_draw_wall_strip(dest, rayHit, wall_screen_height, player_screen_z,  
                                    wall_texture, rayHit->horizontal);  
+                  
+                /* NUEVO: Renderizar cara inferior de paredes flotantes */
+                /* Renderizar como superficie horizontal (estilo techo) a la altura del wallZOffset */
+                if (rayHit->wallZOffset > 0.0f && wall_texture) {
+                    float player_height = 64.0f;
+                    float player_top = g_engine.camera.z + player_height;
+                    
+                    /* Solo renderizar si estamos debajo de la pared */
+                    if (player_top < rayHit->wallZOffset) {
+                        /* Renderizar superficie horizontal usando proyección de techo */
+                        float eye_height = RAY_TILE_SIZE / 2.0f + g_engine.camera.z;
+                        float surface_height = rayHit->wallZOffset;  /* Altura FIJA de la superficie */
+                        float distance_to_surface = surface_height - eye_height;
+                        
+                        if (distance_to_surface > 0.1f) {
+                            float center_plane = g_engine.displayHeight / 2.0f;
+                            float cos_factor = 1.0f / cosf(g_engine.camera.rot - rayHit->rayAngle);
+                            
+                            /* CORREGIDO: Calcular posición Y fija basada en la altura absoluta */
+                            /* No usar rayHit->correctDistance que varía con la distancia */
+                            /* En su lugar, renderizar como el techo - para cada línea Y de pantalla */
+                            
+                            /* Calcular rango aproximado donde se vería esta superficie */
+                            /* Esto es solo para limitar el área de renderizado */
+                            int screen_y_start = 0;
+                            int screen_y_end = (int)center_plane;  /* Solo la mitad superior de la pantalla */
+                            
+                            int screen_x = x * g_engine.stripWidth;
+                            
+                            /* Renderizar cada línea de la superficie horizontal */
+                            for (int screen_y = screen_y_start; screen_y < screen_y_end && screen_y < g_engine.displayHeight; screen_y++) {
+                                if (center_plane - screen_y <= 0) continue;
+                                
+                                /* Proyección horizontal - igual que el techo */
+                                /* Calcular a qué distancia está el punto que se proyecta en esta línea Y */
+                                float ratio_y = distance_to_surface / (center_plane - screen_y);
+                                float straight_distance = g_engine.viewDist * ratio_y;
+                                float diagonal_distance = straight_distance * cos_factor;
+                                
+                                /* Calcular posición en el mundo */
+                                float x_end = g_engine.camera.x + diagonal_distance * cosf(rayHit->rayAngle);
+                                float y_end = g_engine.camera.y + diagonal_distance * -sinf(rayHit->rayAngle);
+                                
+                                /* Verificar si este punto está dentro del tile de la pared */
+                                int tile_x = (int)(x_end / RAY_TILE_SIZE);
+                                int tile_y = (int)(y_end / RAY_TILE_SIZE);
+                                
+                                /* Solo renderizar si estamos sobre el tile de esta pared */
+                                if (tile_x == rayHit->wallX && tile_y == rayHit->wallY) {
+                                    /* Calcular coordenadas de textura */
+                                    int tex_world_x = ((int)x_end) % RAY_TILE_SIZE;
+                                    int tex_world_y = ((int)y_end) % RAY_TILE_SIZE;
+                                    if (tex_world_x < 0) tex_world_x += RAY_TILE_SIZE;
+                                    if (tex_world_y < 0) tex_world_y += RAY_TILE_SIZE;
+                                    
+                                    int texture_x = (tex_world_x * wall_texture->width) / RAY_TILE_SIZE;
+                                    int texture_y = (tex_world_y * wall_texture->height) / RAY_TILE_SIZE;
+                                    
+                                    uint32_t pixel = ray_sample_texture(wall_texture, texture_x, texture_y);
+                                    
+                                    /* Aplicar fog */
+                                    if (g_engine.fogOn) {
+                                        pixel = ray_fog_pixel(pixel, diagonal_distance);
+                                    }
+                                    
+                                    /* Dibujar pixel(s) */
+                                    for (int sx = 0; sx < g_engine.stripWidth && screen_x + sx < g_engine.displayWidth; sx++) {
+                                        gr_put_pixel(dest, screen_x + sx, screen_y, pixel);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                   
                 /* Slopes no longer supported - draw as normal wall */
             }  
